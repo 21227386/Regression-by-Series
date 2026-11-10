@@ -37,7 +37,7 @@ def validate_model_types(bundle):
             raise ValueError('이전 모델의 함종 체계가 다릅니다. 새 프로그램에서 원본 엑셀로 다시 학습하세요.')
 
 def read_excel(path, training=True):
-    df = pd.read_excel(path, engine='openpyxl')
+    df = pd.read_excel(path, engine='openpyxl', dtype=object)
     names = [re.sub(r'\((?:년|m|hp|kw|kn|tonne|ton)\)$', '', re.sub(r'\s+', '', str(c)), flags=re.IGNORECASE) for c in df.columns]
     df.columns = [ALIASES.get(c, c) for c in names]
     if df.columns.duplicated().any():
@@ -48,30 +48,38 @@ def read_excel(path, training=True):
         raise ValueError('필수 열 누락: ' + ', '.join(missing))
     if df.empty:
         raise ValueError('데이터가 없습니다.')
-    # Only inspect program input fields; blank optional user notes are irrelevant.
-    blanks = df[required].isna() | df[required].apply(lambda col: col.map(lambda v: isinstance(v, str) and not v.strip()))
-    excluded = []
-    for idx in df.index[blanks.any(axis=1)]:
-        excluded.append({'엑셀 행': int(idx) + 2, '함종': '' if pd.isna(df.at[idx, '함분류']) else str(df.at[idx, '함분류']),
-                         '제외 사유': '빈 항목: ' + ', '.join(HEADERS[c] for c in required if blanks.at[idx, c])})
+    # Reject malformed rows as a whole, keeping a traceable per-row audit.
+    reasons = {idx: [] for idx in df.index}
+    for c in required:
+        blank = df[c].isna() | df[c].map(lambda v: isinstance(v, str) and not v.strip())
+        for idx in df.index[blank]: reasons[idx].append(HEADERS[c] + ': 빈 값')
+        if c == '함분류':
+            types = df[c].astype(str).str.strip().replace(SHIP_ALIASES)
+            bad = ~blank & ~types.isin(SHIP_TYPES)
+            for idx in df.index[bad]: reasons[idx].append('함종: 허용되지 않은 값')
+        else:
+            values = pd.to_numeric(df[c], errors='coerce')
+            invalid = ~np.isfinite(values) | df[c].map(lambda v: isinstance(v, (bool, np.bool_)))
+            for idx in df.index[~blank & invalid]: reasons[idx].append(HEADERS[c] + ': 숫자 형식 오류 또는 무한값')
+            if c == '취역연도':
+                bounds = (values < 1800) | (values > 2200) | (values % 1 != 0)
+                detail = ': 1800~2200의 정수 필요'
+            else:
+                bounds = values <= 0
+                detail = ': 0보다 큰 값 필요'
+            for idx in df.index[~blank & ~invalid & bounds]: reasons[idx].append(HEADERS[c] + detail)
+            df[c] = values
+    excluded = [{'엑셀 행': int(idx) + 2,
+                 '함종': '' if pd.isna(df.at[idx, '함분류']) else str(df.at[idx, '함분류']),
+                 '제외 사유': '; '.join(items)} for idx, items in reasons.items() if items]
     input_count = len(df)
-    df = df.loc[~blanks.any(axis=1)].copy()
+    df = df.loc[[idx for idx, items in reasons.items() if not items]].copy()
     if df.empty:
-        raise ValueError(f'전체 {input_count}척이 빈 입력 항목으로 제외되어 분석할 자료가 없습니다. 모든 필수 항목을 채워 주세요.')
+        examples = ' / '.join(f"{r['엑셀 행']}행: {r['제외 사유']}" for r in excluded[:5])
+        raise ValueError(f'전체 {input_count}척이 빈 값 또는 잘못된 입력으로 제외되어 분석할 자료가 없습니다. ' + examples)
     df = normalize_types(df)
     df.attrs['excluded_rows'] = excluded
     df.attrs['input_count'] = input_count
-    numeric = BASE[1:] + (WEIGHTS + ['총중량'] if training else [])
-    for c in numeric:
-        df[c] = pd.to_numeric(df[c], errors='coerce')
-        bad = ~np.isfinite(df[c])
-        if c != '취역연도':
-            bad |= df[c] <= 0
-        else:
-            bad |= (df[c] < 1800) | (df[c] > 2200) | (df[c] % 1 != 0)
-        if bad.any():
-            rows = ', '.join(str(int(i) + 2) for i in df.index[bad][:10])
-            raise ValueError(f'{c}: 엑셀 {rows}행 값 확인 필요. 수치·양수(연도는 1800~2200 정수)여야 합니다. 0중량은 로그모형에서 처리할 수 없습니다.')
     return df
 
 def design(df, terms, classes, mean_year):
@@ -118,7 +126,7 @@ def train(df):
     df = normalize_types(df)
     models = {f'SWBS{i}': fit_one(df, f'SWBS{i}', terms) for i, terms in TERMS.items()}
     excluded = df.attrs.get('excluded_rows', [])
-    warnings = ([f'입력 {df.attrs.get("input_count", len(df))}척 중 빈 항목이 있는 {len(excluded)}척 제외, {len(df)}척 학습. 제외 행: ' + ', '.join(str(r['엑셀 행']) for r in excluded)] if excluded else [])
+    warnings = ([f'입력 {df.attrs.get("input_count", len(df))}척 중 빈 값 또는 오류가 있는 {len(excluded)}척 제외, {len(df)}척 학습. 제외 행: ' + ', '.join(str(r['엑셀 행']) for r in excluded)] if excluded else [])
     if '총중량' in df:
         gap = np.abs(df['총중량'] - df[WEIGHTS].sum(axis=1)) / df['총중량']
         if (gap > .01).any():
@@ -198,7 +206,7 @@ def template(path):
                  '첫 번째 데이터 시트에 실적함 1척당 1행으로 입력하세요.',
                  '기존 자료와 추가 자료를 합친 전체 파일을 업로드하면 계수를 다시 추정합니다.',
                  'SWBS100~700: 각 계열 총중량(tonne), 총중량: 실제 경하중량(tonne).',
-                 '학습 입력 항목이 하나라도 비어 있는 함정 행은 모든 회귀분석에서 제외합니다. 총중량도 필수입니다.',
+                 '빈 값, ?, 수치 오류, 0·음수, 잘못된 함종·연도가 있는 함정 행은 모든 회귀분석에서 제외합니다. 총중량도 필수입니다.',
                  '길이/폭/깊이 m, 소요마력 hp, 소요전력 kW, 순항속력 kn.',
                  '속력은 기록용이며 현재 회귀식에는 사용하지 않습니다.',
                  '0 또는 결측 SWBS 중량은 학습할 수 없습니다.',
@@ -209,8 +217,8 @@ def template(path):
         sheet.sheet_properties.tabColor = '087F87'
         for cell in sheet[1]:
             cell.fill = PatternFill('solid', fgColor='102638')
-            cell.font = Font(name='Times New Roman', color='FFFFFF', bold=True, size=12)
-            cell.alignment = Alignment(vertical='center', wrap_text=True)
+            cell.font = Font(name='Times New Roman', color='FFFFFF', bold=True, size=10)
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
         sheet.row_dimensions[1].height = 60
         for col in sheet.columns:
             sheet.column_dimensions[col[0].column_letter].width = 10

@@ -91,7 +91,9 @@ class ModelTests(unittest.TestCase):
         self.df.loc[0,'SWBS100']=0
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'bad.xlsx'; self.df.to_excel(p,index=False)
-            with self.assertRaisesRegex(ValueError,'SWBS100'): read_excel(p)
+            loaded=read_excel(p)
+            self.assertEqual(len(loaded),119)
+            self.assertIn('SWBS100',loaded.attrs['excluded_rows'][0]['제외 사유'])
     def test_unit_headers_width_and_exclusions(self):
         from model import HEADERS, template
         from openpyxl import load_workbook
@@ -106,6 +108,10 @@ class ModelTests(unittest.TestCase):
             self.assertEqual([c.value for c in wb['데이터'][1]],[HEADERS[c] for c in BASE+WEIGHTS+['총중량']])
             for ws in wb:
                 for dim in ws.column_dimensions.values():self.assertEqual(dim.width,10)
+                for cell in ws[1]:
+                    self.assertEqual(cell.font.sz,10)
+                    self.assertEqual(cell.alignment.horizontal,'center')
+                    self.assertEqual(cell.alignment.vertical,'center')
             wb.close()
             data.rename(columns=HEADERS).to_excel(p,index=False)
             loaded=read_excel(p)
@@ -123,6 +129,25 @@ class ModelTests(unittest.TestCase):
             data=data[BASE];data.loc[0,'폭']=np.nan;data.to_excel(p,index=False)
             loaded=read_excel(p,training=False)
             self.assertEqual(len(loaded),119)
+    def test_malformed_rows_excluded_with_reasons(self):
+        data=self.df.astype(object)
+        data.loc[0,'길이']='?'
+        data.loc[1,'소요마력']='abc'
+        data.loc[2,'함분류']='?'
+        data.loc[3,'취역연도']=2020.5
+        data.loc[4,'SWBS200']=-1
+        data.loc[5,'소요전력']=float('inf')
+        data.loc[6,'폭']=True
+        data.loc[7,'SWBS100']=' '
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'bad.xlsx';data.to_excel(p,index=False)
+            loaded=read_excel(p)
+            self.assertEqual(len(loaded),112)
+            self.assertEqual([r['엑셀 행'] for r in loaded.attrs['excluded_rows']],list(range(2,10)))
+            bundle=train(loaded)
+            self.assertEqual(bundle['models']['SWBS100']['n'],112)
+            b=read_excel(p,training=False)
+            self.assertEqual(len(b),114) # Missing/invalid actual weights are irrelevant for prediction.
     def test_insufficient(self):
         with self.assertRaisesRegex(ValueError,'부족'): train(self.df.iloc[:3])
 
