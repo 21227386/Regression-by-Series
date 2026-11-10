@@ -25,7 +25,7 @@ class App:
                   '함종: 구축함·호위함·고속함·상륙함·기뢰전함·지원함\n'
                   '초계함·초계정은 호위함으로 통합하여 같은 Dt를 적용합니다.\n'
                   '총중량 기본값은 SWBS100~700 예측 합계입니다.\n'
-                  '선택 총중량 독립회귀는 K(LBD)^α Dt exp[γ(Y−평균연도)/10] 모형입니다.\n'
+                  '선택 총중량 독립회귀는 K(LBD)^α P^β Dt exp[γ(Y−평균연도)/10] 모형입니다.\n'
                   '순항속력은 제공식에 없어 회귀에서 제외됩니다.\n'
                   '학습 적합도는 새 함정에 대한 정확도를 보장하지 않습니다.\n'
                   '신규 함급의 독립 검증자료로 예측 성능을 확인하세요.')
@@ -66,7 +66,11 @@ class App:
             raise ValueError('지원하지 않는 모델 파일입니다.')
         validate_model_types(b)
         self.bundle, self.data = b, None
-        self.show('모델을 불러왔습니다. 신규 함정 예측을 실행하세요.\n\n'+coefficients(b).to_string(index=False))
+        notice = ''
+        total = b['models'].get('총중량_독립회귀')
+        if total and 'P' not in total['terms']:
+            notice = '주의: 이 모델의 총중량 회귀에는 소요마력이 없습니다. 소요마력 포함 계수를 얻으려면 원본 엑셀로 다시 학습하세요.\n'
+        self.show('모델을 불러왔습니다. 신규 함정 예측을 실행하세요.\n'+notice+'\n'+coefficients(b).to_string(index=False))
     def forecast(self):
         self.require(); p = self.choose()
         if not p: return

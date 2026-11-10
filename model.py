@@ -114,7 +114,7 @@ def train(df):
             warnings.append(f'입력 총중량과 SWBS 합계가 1% 이상 다른 자료 {(gap > .01).sum()}척. 총중량 정의를 확인하세요.')
         # Independent baseline, explicitly distinct from the seven supplied formulas.
         try:
-            models['총중량_독립회귀'] = fit_one(df, '총중량', ['LBD', 'year'])
+            models['총중량_독립회귀'] = fit_one(df, '총중량', ['LBD', 'P', 'year'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
     return {'version': 2, 'models': models, 'warnings': warnings}
@@ -142,7 +142,7 @@ def coefficients(bundle):
         row = {'계열': name, 'K': float(np.exp(b[0])), '역변환보정': m['smearing'],
                '기준함분류': m['classes'][0], '기준취역연도': m['mean_year'],
                '식': 'W = K × ' + ' × '.join({'LBD':'(LBD)^α', 'LB':'(LB)^α', 'L':'L^β',
-                  'P':'P^α', 'PE':'PE^β' if 'LBD' in terms else 'PE^α',
+                  'P':'P^β' if 'LBD' in terms else 'P^α', 'PE':'PE^β' if 'LBD' in terms else 'PE^α',
                   'year':'exp[γ(Y−기준연도)/10]'}[t] for t in terms) + ' × Dt × 역변환보정'}
         row.update({t + '_회귀계수': float(v) for t, v in zip(terms, b[1:p])})
         for j, cls in enumerate(m['classes']):

@@ -34,6 +34,23 @@ class ModelTests(unittest.TestCase):
         out=predict(self.df.iloc[100:][BASE],bundle)
         for c in WEIGHTS:
             np.testing.assert_allclose(out[c+'_예측_tonne'],self.df.iloc[100:][c],rtol=1e-9)
+    def test_total_power_coefficient_and_prediction(self):
+        from model import coefficients
+        data=self.df.copy()
+        x=design(data,['LBD','P','year'],['구축함','호위함'],data['취역연도'].mean())
+        expected=np.array([1.1,.6,.35,.08,.2])
+        data['총중량']=np.exp(x@expected)
+        bundle=train(data)
+        m=bundle['models']['총중량_독립회귀']
+        self.assertEqual(m['terms'],['LBD','P','year'])
+        np.testing.assert_allclose(m['coef'],expected,rtol=1e-9)
+        base=data.iloc[[0]][BASE].copy(); base['함분류']='호위함'
+        faster=base.copy(); faster['소요마력']*=2
+        a=predict(base,bundle); b=predict(faster,bundle)
+        self.assertAlmostEqual(b['총중량_독립회귀_예측_tonne'].iloc[0]/a['총중량_독립회귀_예측_tonne'].iloc[0],2**.35)
+        rows=coefficients(bundle)
+        formula=rows.loc[rows['계열']=='총중량_독립회귀','식'].iloc[0]
+        self.assertIn('P^β',formula)
     def test_unseen_class(self):
         b=train(self.df); data=self.df.iloc[:1].copy(); data['함분류']='지원함'
         with self.assertRaisesRegex(ValueError,'학습되지'): predict(data,b)
