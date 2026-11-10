@@ -199,6 +199,8 @@ class App:
                 self.status.set('UPLOAD FAILED  |  기존 모델은 유지됩니다.');messagebox.showerror('학습 실패',state['error']);return
             self.data,self.bundle=state['result'];self.clear_prediction()
             self.refresh_model(Path(p).name)
+            skipped = self.data.attrs.get('excluded_rows', [])
+            if skipped: messagebox.showinfo('불완전한 함정 데이터 제외', f'{len(skipped)}척 제외, {len(self.data)}척으로 학습했습니다. 회귀 탭과 결과 엑셀의 제외 행 시트에서 확인하세요.')
             self.status.set('MODEL READY  |  계수 추정 완료. 신규 설계 제원을 입력하세요.')
             self.notebook.select(self.model_tab)
         self.root.after(100,finish)
@@ -264,7 +266,7 @@ class App:
         if not p:return
         data=read_excel(p,training=False);result=predict(data,self.bundle);self.data=data
         self.render_result(result.iloc[0]);self.notebook.select(self.design_tab)
-        self.status.set(f'BATCH READY  |  {len(data)}척 예측 완료. 화면은 첫 함정, 엑셀은 전체 함정 결과입니다.')
+        self.status.set(f'BATCH READY  |  {len(data)}척 예측 완료, 빈 항목 {len(data.attrs.get("excluded_rows", []))}척 제외. 화면은 첫 함정, 엑셀은 전체 함정 결과입니다.')
     def report(self):
         self.require()
         if self.data is None:raise ValueError('학습 또는 예측을 먼저 실행하세요.')

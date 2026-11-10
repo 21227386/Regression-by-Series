@@ -1,10 +1,12 @@
 """SWBS log-linear regression; weights tonne, dimensions m, power hp/kW."""
 import json
+import re
 import numpy as np
 import pandas as pd
 
 BASE = ['함분류', '취역연도', '길이', '폭', '깊이', '소요마력', '소요전력', '순항속력']
 WEIGHTS = [f'SWBS{i}' for i in range(100, 800, 100)]
+HEADERS = dict(zip(BASE + WEIGHTS + ['총중량'], ['함종', '취역연도 (년)', '길이(m)', '폭(m)', '깊이(m)', '소요마력(hp)', '소요전력(kW)', '순항속력(kn)'] + [f'{c}(tonne)' for c in WEIGHTS] + ['총중량(tonne)']))
 # The supplied equations determine these terms; cruising speed is deliberately unused.
 TERMS = {100: ['LBD'], 200: ['P', 'year'], 300: ['PE', 'L', 'year'],
          400: ['year'], 500: ['LBD', 'PE', 'year'], 600: ['LB'], 700: ['year']}
@@ -36,25 +38,30 @@ def validate_model_types(bundle):
 
 def read_excel(path, training=True):
     df = pd.read_excel(path, engine='openpyxl')
-    names = [str(c).strip().replace(' ', '') for c in df.columns]
+    names = [re.sub(r'\((?:년|m|hp|kw|kn|tonne|ton)\)$', '', re.sub(r'\s+', '', str(c)), flags=re.IGNORECASE) for c in df.columns]
     df.columns = [ALIASES.get(c, c) for c in names]
     if df.columns.duplicated().any():
         raise ValueError('중복된 열 이름이 있습니다.')
-    required = BASE + (WEIGHTS if training else [])
+    required = BASE + (WEIGHTS + ['총중량'] if training else [])
     missing = [c for c in required if c not in df]
     if missing:
         raise ValueError('필수 열 누락: ' + ', '.join(missing))
     if df.empty:
         raise ValueError('데이터가 없습니다.')
-    if df['함분류'].isna().any() or (df['함분류'].astype(str).str.strip() == '').any():
-        raise ValueError('함분류에 빈 값이 있습니다.')
+    # Only inspect program input fields; blank optional user notes are irrelevant.
+    blanks = df[required].isna() | df[required].apply(lambda col: col.map(lambda v: isinstance(v, str) and not v.strip()))
+    excluded = []
+    for idx in df.index[blanks.any(axis=1)]:
+        excluded.append({'엑셀 행': int(idx) + 2, '함종': '' if pd.isna(df.at[idx, '함분류']) else str(df.at[idx, '함분류']),
+                         '제외 사유': '빈 항목: ' + ', '.join(HEADERS[c] for c in required if blanks.at[idx, c])})
+    input_count = len(df)
+    df = df.loc[~blanks.any(axis=1)].copy()
+    if df.empty:
+        raise ValueError(f'전체 {input_count}척이 빈 입력 항목으로 제외되어 분석할 자료가 없습니다. 모든 필수 항목을 채워 주세요.')
     df = normalize_types(df)
-    numeric = BASE[1:] + (WEIGHTS if training else [])
-    if training and '총중량' in df:
-        if df['총중량'].isna().all():
-            df = df.drop(columns=['총중량'])
-        else:
-            numeric += ['총중량']
+    df.attrs['excluded_rows'] = excluded
+    df.attrs['input_count'] = input_count
+    numeric = BASE[1:] + (WEIGHTS + ['총중량'] if training else [])
     for c in numeric:
         df[c] = pd.to_numeric(df[c], errors='coerce')
         bad = ~np.isfinite(df[c])
@@ -63,7 +70,7 @@ def read_excel(path, training=True):
         else:
             bad |= (df[c] < 1800) | (df[c] > 2200) | (df[c] % 1 != 0)
         if bad.any():
-            rows = ', '.join(str(i + 2) for i in np.flatnonzero(bad)[:10])
+            rows = ', '.join(str(int(i) + 2) for i in df.index[bad][:10])
             raise ValueError(f'{c}: 엑셀 {rows}행 값 확인 필요. 수치·양수(연도는 1800~2200 정수)여야 합니다. 0중량은 로그모형에서 처리할 수 없습니다.')
     return df
 
@@ -110,7 +117,8 @@ def predict_one(df, model):
 def train(df):
     df = normalize_types(df)
     models = {f'SWBS{i}': fit_one(df, f'SWBS{i}', terms) for i, terms in TERMS.items()}
-    warnings = []
+    excluded = df.attrs.get('excluded_rows', [])
+    warnings = ([f'입력 {df.attrs.get("input_count", len(df))}척 중 빈 항목이 있는 {len(excluded)}척 제외, {len(df)}척 학습. 제외 행: ' + ', '.join(str(r['엑셀 행']) for r in excluded)] if excluded else [])
     if '총중량' in df:
         gap = np.abs(df['총중량'] - df[WEIGHTS].sum(axis=1)) / df['총중량']
         if (gap > .01).any():
@@ -120,7 +128,7 @@ def train(df):
             models['총중량_독립회귀'] = fit_one(df, '총중량', ['LBD', 'P', 'year'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
-    return {'version': 2, 'models': models, 'warnings': warnings}
+    return {'version': 2, 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
 
 def predict(df, bundle):
     validate_model_types(bundle)
@@ -156,16 +164,19 @@ def export(path, df, bundle):
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
         predict(df, bundle).to_excel(writer, sheet_name='예측결과', index=False)
         coefficients(bundle).to_excel(writer, sheet_name='회귀계수', index=False)
+        audit = [{**r, '구분': '학습'} for r in bundle.get('excluded_rows', [])]
+        audit += [{**r, '구분': '현재 입력'} for r in df.attrs.get('excluded_rows', [])]
+        if audit: pd.DataFrame(audit).drop_duplicates().to_excel(writer, sheet_name='제외 행', index=False)
         metrics = [{k: m[k] for k in ['target','n','parameters','rmse_tonne','mape_percent','r2','condition_number']} for m in bundle['models'].values()]
         pd.DataFrame(metrics).to_excel(writer, sheet_name='학습적합도', index=False)
         pd.DataFrame({'주의': bundle['warnings'] + ['적합도는 학습자료 기준이며 외부 검증 성능이 아닙니다.', '총중량_SWBS합계는 100~700 합계입니다. 독립회귀 총중량과 구분하세요.', '순항속력은 입력에 보존하지만 제공된 식에 없어 회귀에 사용하지 않습니다.']}).to_excel(writer, sheet_name='안내', index=False)
 
 def template(path):
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
-        pd.DataFrame(columns=BASE + WEIGHTS + ['총중량']).to_excel(writer, sheet_name='데이터', index=False)
+        pd.DataFrame(columns=[HEADERS[c] for c in BASE + WEIGHTS + ['총중량']]).to_excel(writer, sheet_name='데이터', index=False)
         pd.DataFrame({'함종': SHIP_TYPES + ['초계함', '초계정'],
                       '적용 함종': SHIP_TYPES + ['호위함', '호위함']}).to_excel(writer, sheet_name='함종 안내', index=False)
-        pd.DataFrame({'열': BASE + WEIGHTS + ['총중량'],
+        pd.DataFrame({'열': [HEADERS[c] for c in BASE + WEIGHTS + ['총중량']],
                       '단위': ['문자','년','m','m','m','hp','kW','kn'] + ['tonne'] * 8}).to_excel(writer, sheet_name='단위', index=False)
 
     # Format the workbook without adding fabricated reference-ship values.
@@ -178,7 +189,7 @@ def template(path):
     ws.auto_filter.ref = ws.dimensions
     units = ['함종', '년', 'm', 'm', 'm', 'hp', 'kW', 'kn'] + ['tonne'] * 8
     for cell, unit in zip(ws[1], units):
-        cell.comment = Comment('단위: ' + unit + (' / 선택: 경하중량' if cell.value == '총중량' else ''), 'Naval Ship Design')
+        cell.comment = Comment('단위: ' + unit + (' / 경하중량' if cell.value == HEADERS['총중량'] else ''), 'Naval Ship Design')
     validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPES + ['초계함','초계정']) + '"')
     validation.errorTitle = '함종 확인'; validation.error = '목록에서 함종을 선택하세요.'
     validation.showErrorMessage = True; ws.add_data_validation(validation); validation.add('A2:A10000')
@@ -187,7 +198,7 @@ def template(path):
                  '첫 번째 데이터 시트에 실적함 1척당 1행으로 입력하세요.',
                  '기존 자료와 추가 자료를 합친 전체 파일을 업로드하면 계수를 다시 추정합니다.',
                  'SWBS100~700: 각 계열 총중량(tonne), 총중량: 실제 경하중량(tonne).',
-                 '총중량은 선택 입력입니다. 전부 비우면 계열 합계만 예측합니다. 일부 행만 비우는 것은 허용하지 않습니다.',
+                 '학습 입력 항목이 하나라도 비어 있는 함정 행은 모든 회귀분석에서 제외합니다. 총중량도 필수입니다.',
                  '길이/폭/깊이 m, 소요마력 hp, 소요전력 kW, 순항속력 kn.',
                  '속력은 기록용이며 현재 회귀식에는 사용하지 않습니다.',
                  '0 또는 결측 SWBS 중량은 학습할 수 없습니다.',
@@ -199,9 +210,11 @@ def template(path):
         for cell in sheet[1]:
             cell.fill = PatternFill('solid', fgColor='102638')
             cell.font = Font(name='Times New Roman', color='FFFFFF', bold=True, size=12)
-            cell.alignment = Alignment(vertical='center')
-        sheet.row_dimensions[1].height = 30
+            cell.alignment = Alignment(vertical='center', wrap_text=True)
+        sheet.row_dimensions[1].height = 60
         for col in sheet.columns:
-            sheet.column_dimensions[col[0].column_letter].width = 22
-    guide.column_dimensions['A'].width = 115
+            sheet.column_dimensions[col[0].column_letter].width = 10
+    for row in guide.iter_rows(min_row=2):
+        row[0].alignment = Alignment(wrap_text=True, vertical='top')
+        guide.row_dimensions[row[0].row].height = 110
     wb.save(path)

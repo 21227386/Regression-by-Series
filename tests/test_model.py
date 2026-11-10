@@ -92,6 +92,37 @@ class ModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'bad.xlsx'; self.df.to_excel(p,index=False)
             with self.assertRaisesRegex(ValueError,'SWBS100'): read_excel(p)
+    def test_unit_headers_width_and_exclusions(self):
+        from model import HEADERS, template
+        from openpyxl import load_workbook
+        data=self.df.copy()
+        data.loc[2,'길이']=np.nan
+        data.loc[4,'총중량']=np.nan
+        data.loc[7,'함분류']='   '
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'units.xlsx'
+            template(p)
+            wb=load_workbook(p)
+            self.assertEqual([c.value for c in wb['데이터'][1]],[HEADERS[c] for c in BASE+WEIGHTS+['총중량']])
+            for ws in wb:
+                for dim in ws.column_dimensions.values():self.assertEqual(dim.width,10)
+            wb.close()
+            data.rename(columns=HEADERS).to_excel(p,index=False)
+            loaded=read_excel(p)
+            self.assertEqual(len(loaded),117)
+            self.assertEqual([r['엑셀 행'] for r in loaded.attrs['excluded_rows']],[4,6,9])
+            bundle=train(loaded)
+            self.assertEqual(bundle['models']['SWBS100']['n'],117)
+            report=Path(tmp)/'out.xlsx';export(report,loaded,bundle)
+            with pd.ExcelFile(report) as book:self.assertIn('제외 행',book.sheet_names)
+    def test_empty_fleet_rejected_and_batch_does_not_require_weights(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'empty_values.xlsx'
+            data=self.df.copy();data['총중량']=np.nan;data.to_excel(p,index=False)
+            with self.assertRaisesRegex(ValueError,'전체 120척'):read_excel(p)
+            data=data[BASE];data.loc[0,'폭']=np.nan;data.to_excel(p,index=False)
+            loaded=read_excel(p,training=False)
+            self.assertEqual(len(loaded),119)
     def test_insufficient(self):
         with self.assertRaisesRegex(ValueError,'부족'): train(self.df.iloc[:3])
 
