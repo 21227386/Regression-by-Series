@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from model import TERMS, YEAR_TARGETS, WEIGHTS, design, train, predict, read_excel, save_model_excel, load_model_excel, coefficients, TOTAL_MODEL, TOTAL_TARGET, TOTAL_SUM_COLUMN
+from model import TERMS, YEAR_TARGETS, WEIGHTS, design, train, predict, read_excel, save_model_excel, load_model_excel, coefficients, template, TOTAL_MODEL, TOTAL_TARGET, TOTAL_SUM_COLUMN
 
 def fleet():
     rng=np.random.default_rng(67);n=100
@@ -67,6 +67,16 @@ class ModelTests(unittest.TestCase):
             df.to_excel(p,index=False);valid=read_excel(p)
             self.assertIn(0,valid.index);self.assertNotIn(1,valid.index)
             self.assertEqual(valid.attrs['excluded_rows'][0]['엑셀 행'],3)
+    def test_template_preserves_actual_700_for_deduction(self):
+        from openpyxl import load_workbook
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'template.xlsx';template(p)
+            wb=load_workbook(p);headers=[c.value for c in wb['데이터'][1]]
+            self.assertIn('SWBS700(tonne)',headers);self.assertEqual(headers[-1],'총중량(tonne)')
+            comment=wb['데이터'].cell(1,headers.index('SWBS700(tonne)')+1).comment.text
+            self.assertIn('공제용',comment)
+            self.assertIn('원래 경하중량',wb['데이터'].cell(1,len(headers)).comment.text)
+            wb.close()
     def test_missing_year_variation_is_explicit(self):
         df=fleet();df.loc[df['함분류']=='호위함','취역연도']=2000
         with self.assertRaisesRegex(ValueError,'호위함'):train(df)
