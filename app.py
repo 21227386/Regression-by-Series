@@ -172,13 +172,15 @@ class App:
         if self.busy: messagebox.showinfo('학습 중','현재 학습이 끝난 후 진행하세요.'); return
         try: action()
         except Exception as e: messagebox.showerror('처리 실패',str(e))
-    def choose(self,save=False,ext='.xlsx'):
+    def choose(self,save=False,ext='.xlsx',initialfile=None):
         fn=filedialog.asksaveasfilename if save else filedialog.askopenfilename
-        return fn(defaultextension=ext,filetypes=[('Excel' if ext=='.xlsx' else 'Model JSON','*'+ext)])
+        options = dict(defaultextension=ext,filetypes=[('Excel' if ext=='.xlsx' else 'Model JSON','*'+ext)])
+        if initialfile is not None: options['initialfile'] = initialfile
+        return fn(**options)
     def require(self):
         if self.bundle is None: raise ValueError('실적함 데이터를 업로드하거나 저장된 모델을 불러오세요.')
     def make_template(self):
-        p=self.choose(True)
+        p=self.choose(True,initialfile='Input File Template.xlsx')
         if p: template(p); self.status.set('TEMPLATE SAVED  |  '+str(p)); messagebox.showinfo('양식 저장 완료','첫 번째 시트에 실적함 자료를 입력한 후 Input File Upload를 누르세요.')
     def fit(self):
         p=self.choose()
