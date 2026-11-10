@@ -26,7 +26,7 @@ class UITests(unittest.TestCase):
                 self.assertFalse(app.busy);self.assertIsNotNone(app.bundle)
                 row=fixture.df.iloc[0]
                 for c in BASE:app.inputs[c].set(str(row[c]))
-                app.estimate();root.update()
+                app.estimate();app.notebook.select(app.design_tab);root.update()
                 self.assertIn('tonne',app.sum_value.get())
                 self.assertEqual(len(app.result_tree.get_children()),7)
                 last=app.result_tree.bbox(app.result_tree.get_children()[-1])
