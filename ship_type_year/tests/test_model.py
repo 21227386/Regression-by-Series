@@ -5,6 +5,9 @@ import numpy as np
 import pandas as pd
 from model import TERMS, YEAR_TARGETS, WEIGHTS, design, train, predict, read_excel, save_model_excel, load_model_excel, coefficients, template, TOTAL_MODEL, TOTAL_TARGET, TOTAL_SUM_COLUMN
 
+from functools import partial
+train=partial(train,compare=False)
+
 def fleet():
     rng=np.random.default_rng(67);n=100
     df=pd.DataFrame({'순번':[f'{i+1:03d}' for i in range(n)],'함분류':['구축함','호위함']*50,'함유형':['DDG','FFG']*50,

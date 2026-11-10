@@ -124,7 +124,7 @@ def design(df, terms, classes, mean_years, year_by_type):
         raise ValueError('학습되지 않은 함분류: ' + ', '.join(unknown))
     values = {'LBD': np.log(df['길이'] * df['폭'] * df['깊이']),
               'LB': np.log(df['길이'] * df['폭']), 'L': np.log(df['길이']),
-              'P': np.log(df['소요마력']), 'PE': np.log(df['소요전력'])}
+              'P': np.log(df['소요마력']), 'PE': np.log(df['소요전력']), 'D': np.log(df['깊이'])}
     cols = [np.ones(len(df))] + [np.asarray(values[t]) for t in terms]
     cols += [(df['함분류'] == c).astype(float).to_numpy() for c in classes[1:]]
     if year_by_type:
@@ -177,8 +177,8 @@ def fit_hull_by_type(df):
             'condition_number':float(np.linalg.cond(x)),'rmse_tonne':float(np.sqrt(np.mean((actual-prediction)**2))),
             'mape_percent':float(np.mean(abs((actual-prediction)/actual))*100),'r2':None if den==0 else float(1-((actual-prediction)**2).sum()/den)}
 
-def fit_one(df, target, terms):
-    if target=='SWBS100':return fit_hull_by_type(df)
+def fit_one(df, target, terms, hull_by_type=True):
+    if target=='SWBS100' and hull_by_type:return fit_hull_by_type(df)
     counts = df['함분류'].value_counts()
     classes = sorted(counts.index.tolist(), key=lambda c: (-int(counts[c]), SHIP_TYPES.index(c)))
     mean_years={c:float(df.loc[df['함분류']==c,'취역연도'].mean()) for c in classes}
@@ -236,34 +236,60 @@ def predict_one(df, model):
     with np.errstate(over='raise', invalid='raise'):
         return np.exp(x @ np.asarray(coef)) * model['smearing']
 
-def train(df,progress=None):
+RECOMMENDED_TERMS = {'SWBS100':['LB','D'],'SWBS200':['P','L'],'SWBS300':['PE','LB'],
+                     'SWBS400':['LB'],'SWBS500':['LB','PE'],'SWBS600':['LBD'],TOTAL_MODEL:['LB','D','P']}
+
+def formula_text(m):
+    if m.get('size_by_type'):core='(LBD/V0)^αt'
+    else:
+        letters=['a','b','c']
+        core=' × '.join(t+'^'+letters[j] for j,t in enumerate(m['terms']))
+    return 'W = K'+(' × '+core if core else '')+' × Dt × exp[γt(Y−Ȳt)/10] × C'
+
+def train(df,progress=None,compare=True):
     from year_search import select_year_scale
-    df = normalize_types(df)
+    df=normalize_types(df)
     if '총중량' in df:
         if 'SWBS700' not in df:raise ValueError('총 경하중량에서 공제할 실적 SWBS700 중량이 필요합니다.')
-        df[TOTAL_TARGET] = df['총중량'] - df['SWBS700']
+        df[TOTAL_TARGET]=df['총중량']-df['SWBS700']
         if (df['SWBS700']<0).any() or (df[TOTAL_TARGET]<=0).any():raise ValueError('SWBS700은 0 이상이고, 총중량−SWBS700은 양수여야 합니다.')
-    models = {f'SWBS{i}': fit_one(df, f'SWBS{i}', terms) for i, terms in TERMS.items()}
-    excluded = df.attrs.get('excluded_rows', [])
-    warnings = ([f'입력 {df.attrs.get("input_count", len(df))}척 중 빈 값 또는 오류가 있는 {len(excluded)}척 제외, {len(df)}척 학습. 제외 행: ' + ', '.join(str(r['엑셀 행']) for r in excluded)] if excluded else [])
-    if df.attrs.get('serial_auto'):
-        warnings.append('순번 없는 이전 양식: 원본 데이터 순서에 따라 1부터 식별번호를 자동 부여했습니다.')
+    excluded=df.attrs.get('excluded_rows',[])
+    warnings=([f'오류 자료 {len(excluded)}척 제외, 유효 {len(df)}척 학습.'] if excluded else [])
+    if df.attrs.get('serial_auto'):warnings.append('이전 양식의 순번을 자동 부여했습니다.')
+    specs=[(f'SWBS{i}',f'SWBS{i}',terms) for i,terms in TERMS.items()]
     if '총중량' in df:
-        gap = np.abs(df[TOTAL_TARGET] - df[WEIGHTS].sum(axis=1)) / df[TOTAL_TARGET]
-        if (gap > .01).any():
-            warnings.append(f'입력 총중량−SWBS700과 SWBS100~600 합계가 1% 이상 다른 자료 {(gap > .01).sum()}척. 총중량 정의를 확인하세요.')
-        # Independent baseline, explicitly distinct from the seven supplied formulas.
-        try:
-            models[TOTAL_MODEL] = fit_one(df, TOTAL_TARGET, ['LBD', 'P'])
-        except ValueError as e:
-            warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
-    for index,(name,m) in enumerate(list(models.items())):
-        def report(done,total,percent,name=name,index=index):
-            if progress:progress(index*101+done,len(models)*101,f'{name} · 연도 효과 {percent}%')
-        models[name]=select_year_scale(df,m,report)
-    for name,m in models.items():
-        if m.get('year_unavailable_reason'):warnings.append(m['year_unavailable_reason'])
-    return {'version': 3, 'mode':'ship_type_year_exclude_700', 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
+        specs.append((TOTAL_MODEL,TOTAL_TARGET,['LBD','P']))
+        gap=abs(df[TOTAL_TARGET]-df[WEIGHTS].sum(axis=1))/df[TOTAL_TARGET]
+        if (gap>.01).any():warnings.append(f'입력 총중량−SWBS700과 100~600 합계가 1% 이상 다른 자료 {(gap>.01).sum()}척.')
+    models={};comparisons=[];searches=[];count=len(specs)*(2 if compare else 1);index=0
+    for name,target,current_terms in specs:
+        candidates=[]
+        variants=[('current','기존 식',current_terms,True)]
+        if compare:variants.append(('recommended','추천 식',RECOMMENDED_TERMS[name],False))
+        for candidate_id,label,terms,hull in variants:
+            entry={'계열':name,'후보':label,'candidate_id':candidate_id,'선택':False,'MAPE(%)':None,'RMSE(t)':None,'R²':None,'최대절대오차율(%)':None,'연도효과(%)':None,'식':formula_text({'terms':terms,'size_by_type':name=='SWBS100' and hull}),'사유':''}
+            def report(done,total,percent,index=index,label=label):
+                if progress:progress(index*101+done,count*101,f'{name} · {label} · 연도 효과 {percent}%')
+            try:
+                base=fit_one(df,target,terms,hull_by_type=hull)
+                m=select_year_scale(df,base,report)
+                m.update(candidate_id=candidate_id,candidate_label=label,formula=formula_text(m))
+                candidates.append(m)
+                entry.update({'MAPE(%)':m['mape_percent'],'RMSE(t)':m['rmse_tonne'],'R²':m['r2'],'최대절대오차율(%)':max(abs(d['오차율(%)']) for d in m['diagnostics']),'연도효과(%)':m['year_scale']*100,'사유':m.get('year_unavailable_reason','')})
+                searches.extend({'계열':name,'후보':label,**r} for r in m['year_search'])
+            except (ValueError,FloatingPointError,OverflowError,np.linalg.LinAlgError) as e:
+                entry['사유']=str(e);report(101,101,100)
+            comparisons.append(entry);index+=1
+        if not candidates:
+            reason=' / '.join(e['후보']+': '+e['사유'] for e in comparisons if e['계열']==name)
+            if name==TOTAL_MODEL:warnings.append('경하중량 직접회귀 미실행: '+reason);continue
+            raise ValueError(name+' 모든 수식 후보 계산 실패: '+reason)
+        winner=min(candidates,key=lambda m:(round(m['mape_percent'],8),round(m['rmse_tonne'],8),m['candidate_id']!='current'))
+        models[name]=winner
+        for e in comparisons:
+            if e['계열']==name:e['선택']=e['candidate_id']==winner['candidate_id']
+        if winner.get('year_unavailable_reason'):warnings.append(winner['year_unavailable_reason'])
+    return {'version':4,'mode':'ship_type_year_exclude_700','models':models,'warnings':warnings,'excluded_rows':excluded,'formula_comparison':comparisons,'formula_searches':searches}
 
 def predict(df, bundle):
     validate_model_types(bundle)
@@ -289,9 +315,7 @@ def coefficients(bundle):
         b = m['coef']; terms = m['terms']; p = 1+len(terms)
         row = {'계열': name, 'K': float(np.exp(b[0])), '역변환보정': m['smearing'],
                '기준함종': m['classes'][0],
-               '식': 'W = ' + ' × '.join(['K'] + [{'LBD':'(LBD)^α', 'LB':'(LB)^α', 'L':'L^β',
-                  'P':'P^β' if 'LBD' in terms else 'P^α', 'PE':'PE^β' if 'LBD' in terms else 'PE^α',
-                  }[t] for t in terms] + ['Dt'] + (['exp[γt(Y−함종평균연도)/10]'] if m['year_by_type'] else []) + ['C'])}
+               '식': formula_text(m), '선택후보':m.get('candidate_label','기존 식')}
         row.update({t + '_회귀계수': float(v) for t, v in zip(terms, b[1:p])})
         for j, cls in enumerate(m['classes']):
             rows.append({**row, **({'LBD_회귀계수':m['size_alpha'][cls],'αt':m['size_alpha'][cls],'기준LBD(m³)':m['volume_reference'],'식':'W100 = K (LBD/기준LBD)^αt Dt exp[γt(Y−함종평균연도)/10] C'} if m.get('size_by_type') else {}), '함종': cls, '학습척수': m.get('class_counts', {}).get(cls), 'γt':m['gamma'].get(cls), '함종평균연도':m['mean_years'][cls], '선택연도효과(%)':None if m.get('year_scale') is None else m['year_scale']*100, '기본γt':m.get('gamma_base',{}).get(cls), 'Dt': 1.0 if j == 0 else float(np.exp(b[p+j-1]))})
@@ -362,7 +386,7 @@ def template(path):
     wb.save(path)
 
 
-MODEL_TERMS = ['LBD', 'LB', 'L', 'P', 'PE']
+MODEL_TERMS = ['LBD', 'LB', 'L', 'P', 'PE', 'D']
 
 def save_model_excel(path, bundle):
     """Write a human-readable model; these tables are the actual loadable data."""
@@ -370,7 +394,7 @@ def save_model_excel(path, bundle):
     for name, m in bundle['models'].items():
         nterms = len(m['terms'])
         parameters.append({'Target': name, 'K': float(np.exp(m['coef'][0])), 'C': m['smearing'],
-                           'SizeByType':m.get('size_by_type',False),'VolumeReference':m.get('volume_reference'), 'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'],'YearEstimated':m.get('year_estimated',True),'YearIssue':m.get('year_unavailable_reason',''), 'YearScale':m.get('year_scale'),
+                           'CandidateId':m.get('candidate_id','current'),'CandidateLabel':m.get('candidate_label','기존 식'),'SizeByType':m.get('size_by_type',False),'VolumeReference':m.get('volume_reference'), 'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'],'YearEstimated':m.get('year_estimated',True),'YearIssue':m.get('year_unavailable_reason',''), 'YearScale':m.get('year_scale'),
                            'ReferenceType': m['classes'][0], 'N': m['n'], 'Parameters': m['parameters'],
                            'RMSE_tonne': m['rmse_tonne'], 'MAPE_percent': m['mape_percent'],
                            'R2': m['r2'], 'ConditionNumber': m['condition_number'],
@@ -417,6 +441,8 @@ def load_model_excel(path):
             params = pd.read_excel(book, sheet_name='Model Parameters')
             search=pd.read_excel(book,sheet_name='Year Search').astype(object).where(lambda x:x.notna(),None) if 'Year Search' in book.sheet_names else pd.DataFrame()
             selections=pd.read_excel(book,sheet_name='Year Selection').astype(object).where(lambda x:x.notna(),None) if 'Year Selection' in book.sheet_names else pd.DataFrame()
+            comparisons=pd.read_excel(book,sheet_name='Formula Comparison').astype(object).where(lambda x:x.notna(),None).to_dict('records') if 'Formula Comparison' in book.sheet_names else []
+            all_searches=pd.read_excel(book,sheet_name='Formula Year Search').astype(object).where(lambda x:x.notna(),None).to_dict('records') if 'Formula Year Search' in book.sheet_names else []
             cv=pd.read_excel(book,sheet_name='Validation Predictions',dtype={'순번':str}).fillna('') if 'Validation Predictions' in book.sheet_names else pd.DataFrame()
             types = pd.read_excel(book, sheet_name='Ship Types')
             ranges = pd.read_excel(book, sheet_name='Ranges')
@@ -441,7 +467,7 @@ def load_model_excel(path):
         for _, row in params.iterrows():
             name=row['Target']; terms=[] if pd.isna(row['Terms']) else str(row['Terms']).split(',')
             wanted = TERMS[int(name[4:])] if name in WEIGHTS else ['LBD','P']
-            if terms!=wanted: raise ValueError(name+' 설명변수 목록이 다릅니다.')
+            if terms not in [wanted,RECOMMENDED_TERMS[name]]: raise ValueError(name+' 설명변수 목록이 다릅니다.')
             group=types[types['Target']==name]
             if group.empty or group['ShipType'].duplicated().any() or not set(group['ShipType'])<=set(SHIP_TYPES): raise ValueError('함종 목록이 잘못되었습니다.')
             ref=row['ReferenceType']
@@ -470,7 +496,7 @@ def load_model_excel(path):
             if size_by_type and name!='SWBS100':raise ValueError('함종별 규모 지수는 SWBS100에서만 지원합니다.')
             volume_reference=finite(row['VolumeReference'],'기준LBD',True) if size_by_type else None
             size_alpha={r['ShipType']:finite(r['SizeAlpha'],'αt') for _,r in group.iterrows()} if size_by_type else {}
-            models[name]={'size_by_type':size_by_type,'size_alpha':size_alpha,'volume_reference':volume_reference,
+            models[name]={'candidate_id':row.get('CandidateId','current'),'candidate_label':row.get('CandidateLabel','기존 식'),'size_by_type':size_by_type,'size_alpha':size_alpha,'volume_reference':volume_reference,
                           'year_estimated':bool(row.get('YearEstimated',True)),'year_unavailable_reason':'' if pd.isna(row.get('YearIssue','')) else row.get('YearIssue',''),
                           'year_scale':scale,'gamma_base':base_gamma,
                           'year_search':search[search['Target']==name].drop(columns='Target').to_dict('records') if not search.empty else [],
@@ -485,7 +511,7 @@ def load_model_excel(path):
                           'condition_number':finite(row['ConditionNumber'],'ConditionNumber',True),
                           'class_counts':counts,
                           'diagnostics':diagnostics[diagnostics['Target']==name].drop(columns='Target').to_dict('records')}
-        bundle={'version':3,'mode':'ship_type_year_exclude_700','models':models,'warnings':notes,'excluded_rows':excluded}
+        bundle={'formula_comparison':comparisons,'formula_searches':all_searches,'version':4,'mode':'ship_type_year_exclude_700','models':models,'warnings':notes,'excluded_rows':excluded}
         validate_model_types(bundle)
         return bundle
     except (KeyError, TypeError, IndexError) as e:
@@ -507,6 +533,10 @@ def diagnostic_metrics(rows):
 
 
 def write_search_sheets(writer,bundle):
+    if bundle.get('formula_comparison'):
+        pd.DataFrame(bundle['formula_comparison']).to_excel(writer,sheet_name='Formula Comparison',index=False)
+    if bundle.get('formula_searches'):
+        pd.DataFrame(bundle['formula_searches']).to_excel(writer,sheet_name='Formula Year Search',index=False)
     search=[{'Target':name,**r} for name,m in bundle['models'].items() for r in m.get('year_search',[])]
     selections=[{'Target':name,'selected_percent':None if m.get('year_scale') is None else m['year_scale']*100,**m.get('selection',{})} for name,m in bundle['models'].items()]
     pd.DataFrame(search).to_excel(writer,sheet_name='Year Search',index=False)

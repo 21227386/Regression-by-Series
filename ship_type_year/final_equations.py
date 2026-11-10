@@ -24,9 +24,9 @@ def final_equation(name,model,ship_type,design=None):
         factors.append(r'\left(\frac{'+value+'}{'+number(model['volume_reference'])+r'}\right)^{'+number(model['size_alpha'][ship_type])+'}')
     else:
         for term,beta in terms.items():
-            symbolic={'LBD':'LBD','LB':'LB','L':'L','P':'P','PE':r'P_E'}[term]
+            symbolic={'LBD':'LBD','LB':'LB','L':'L','P':'P','PE':r'P_E','D':'D'}[term]
             if design is not None:
-                symbolic=number({'LBD':design['길이']*design['폭']*design['깊이'],'LB':design['길이']*design['폭'],'L':design['길이'],'P':design['소요마력'],'PE':design['소요전력']}[term])
+                symbolic=number({'LBD':design['길이']*design['폭']*design['깊이'],'LB':design['길이']*design['폭'],'L':design['길이'],'P':design['소요마력'],'PE':design['소요전력'],'D':design['깊이']}[term])
             factors.append(r'\left('+symbolic+r'\right)^{'+number(beta)+'}')
     factors.append(number(dt))
     if model['year_by_type']:

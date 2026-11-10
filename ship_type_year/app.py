@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from equation_guide import GUIDE_ROWS, TABLE_EXPLANATION
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
-                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics)
+                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics, formula_text)
 
 TITLE = 'Naval Ship Weight Estimator - Ship Type Year'
 NAVY, INK, TEAL, GOLD = '#102638', '#19384a', '#087f87', '#c69c55'
@@ -28,7 +28,7 @@ class App:
         root.option_add('*Font', (KO, 10))
         style = ttk.Style(root); style.theme_use('clam')
         style.configure('TNotebook', background=BG, borderwidth=0)
-        style.configure('TNotebook.Tab', font=(EN, 12, 'bold'), padding=(22, 10), background='#dce6ec')
+        style.configure('TNotebook.Tab', font=(EN, 11, 'bold'), padding=(14, 10), background='#dce6ec')
         style.map('TNotebook.Tab', background=[('selected', WHITE)], foreground=[('selected', TEAL)])
         style.configure('Treeview', font=(KO, 10), rowheight=23, background=WHITE, fieldbackground=WHITE)
         style.configure('Treeview.Heading', font=(EN, 11, 'bold'), background='#dce7ed', foreground=INK)
@@ -203,6 +203,11 @@ class App:
         self.guide_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(1,self.guide_tab,text='Equations & Guide')
         self.build_guide(self.guide_tab)
         tabs.bind('<<NotebookTabChanged>>',lambda e:self.root.after_idle(self.refresh_final_equations),add='+')
+        self.comparison_tab=tk.Frame(tabs,bg=WHITE);tabs.add(self.comparison_tab,text='Formula Comparison')
+        self.label(self.comparison_tab,'기존 식·추천 식 비교 / 전체 실적함 MAPE 최소 선택',13,TEAL,WHITE,True).pack(anchor='w',padx=10,pady=8)
+        tk.Label(self.comparison_tab,text='각 식의 연도 효과 0~100%를 1% 간격으로 탐색합니다. 동률은 RMSE, 그 다음 기존 식을 우선합니다.\n함종 필터와 관계없이 전체 실적함으로 선택합니다. 표를 좌우로 스크롤하면 수식과 사유를 볼 수 있습니다.',bg=WHITE,fg=MUTED,font=(KO,10),justify='left').pack(anchor='w',padx=10,pady=5)
+        self.comparison_tree=self.scroll_table(self.comparison_tab,['계열','후보','선택','MAPE(%)','RMSE(t)','R²','최대절대오차율(%)','연도효과(%)','식','사유'],[190,90,60,100,110,90,150,110,560,400])
+        self.comparison_tree.tag_configure('winner',foreground=TEAL)
         self.search_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(2,self.search_tab,text='Year Effect Search')
         self.search_note=tk.StringVar(value='연도 효과 0%~100% (1% 간격) 후보를 비교합니다.')
         tk.Label(self.search_tab,textvariable=self.search_note,bg=WHITE,fg=INK,font=(KO,10),wraplength=930,justify='left',anchor='w').pack(fill='x',padx=10,pady=8)
@@ -220,8 +225,8 @@ class App:
         self.label(overview,'점의 순번으로 함정을 식별합니다. 마우스: 상세 정보 / 클릭: 진단표 이동. 적합도는 학습자료 기준입니다.',9,MUTED).pack(side='bottom',anchor='w',pady=3)
         self.label(overview,'왼쪽: 실제·예측 중량(tonne) / 오른쪽: 예측 중량 대비 오차율(%)',9,MUTED).pack(side='bottom',anchor='w',pady=3)
         self.reg_graph.pack(fill='both',expand=True,pady=8)
-        cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','연도효과%','기본γt','적용γt','함종평균연도','기준LBD(m³)']
-        self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100,100,100,130])
+        cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','D','연도효과%','기본γt','적용γt','함종평균연도','기준LBD(m³)']
+        self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100,100,100,100,130])
         self.coeff_tree.heading('LBD',text='LBD 지수 α/αt');self.coeff_tree.column('LBD',width=125)
         self.ship_diagnostics_tab=ships
         self.ship_tree=self.scroll_table(ships,['Ship No.','Excel Row','Ship Type','Subtype','Dt','F(Y)','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,80,90,100,85,95,120,120,120,100])
@@ -257,6 +262,7 @@ class App:
         self.final_formula_images=[]
         self.equation_images=[];self.equation_description_labels=[]
         assets=Path(__file__).resolve().parent/'assets'/'equations'
+        self.label(content,'Existing Formula Reference / 기존 식 참고',16,TEAL,'#edf2f5',True,True).pack(anchor='w',pady=8)
         for key,title,equation,description in GUIDE_ROWS:
             card=tk.Frame(content,bg=WHITE,highlightbackground='#d0dfe7',highlightthickness=1,padx=12,pady=10)
             card.pack(fill='x',pady=(0,10));card.columnconfigure(1,weight=1)
@@ -302,13 +308,13 @@ class App:
             if self.use_design_values.get() and design is None:
                 self.label(self.final_body,'Weight Estimation에서 같은 함종의 설계 제원을 입력해 예측하면 제원 숫자도 대입됩니다.',9,MUTED).pack(anchor='w')
             for name,m in self.bundle['models'].items():
-                self.label(self.final_body,name+' / '+cls,11,TEAL,WHITE,True).pack(anchor='w',pady=(10,0))
+                self.label(self.final_body,name+' / '+cls+' / '+m.get('candidate_label','기존 식'),11,TEAL,WHITE,True).pack(anchor='w',pady=(10,0))
                 formula=final_equation(name,m,cls,design)
                 photo=tk.PhotoImage(data=base64.b64encode(render_png(formula,width))).subsample(2)
                 self.final_formula_images.append(photo)
                 tk.Label(self.final_body,image=photo,bg=WHITE,anchor='w').pack(anchor='w')
                 percent=m.get('year_scale')
-                info='연도 효과 '+('—' if percent is None else f'{percent*100:.0f}%')+' / '+m.get('selection',{}).get('status','')
+                info=formula_text(m)+'\n연도 효과 '+('—' if percent is None else f'{percent*100:.0f}%')+' / '+m.get('selection',{}).get('status','')
                 if m.get('year_unavailable_reason'):info+=' / '+m['year_unavailable_reason']
                 tk.Label(self.final_body,text=info,bg=WHITE,fg=MUTED,font=(KO,9),wraplength=width,justify='left').pack(anchor='w')
             self.label(self.final_body,'합산 중량(700계열 제외) = 위 SWBS100~600의 예측 중량 합계',11,INK,WHITE,True).pack(anchor='w',pady=8)
@@ -327,7 +333,7 @@ class App:
         canvas=tk.Canvas(self.analysis_dialog,width=410,height=50,bg=WHITE,highlightthickness=0);canvas.pack()
         self.analysis_message=tk.StringVar(value='기초 회귀계수를 추정하고 있습니다.')
         tk.Label(self.analysis_dialog,textvariable=self.analysis_message,font=(KO,10),fg=INK,bg=WHITE).pack(pady=4)
-        self.analysis_progress=ttk.Progressbar(self.analysis_dialog,maximum=707,length=410);self.analysis_progress.pack(pady=8)
+        self.analysis_progress=ttk.Progressbar(self.analysis_dialog,maximum=1414,length=410);self.analysis_progress.pack(pady=8)
         self.analysis_tick=0
         def animate():
             if not self.busy or not self.analysis_dialog.winfo_exists():return
@@ -372,7 +378,7 @@ class App:
                 if cls is not None and ship_type!=cls:continue
                 values=[name,ship_type,x.get('class_counts',{}).get(ship_type,'—'),x['classes'][0],
                         f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
-                values += [f"{x['size_alpha'][ship_type]:.8g}" if t=='LBD' and x.get('size_by_type') else f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE']]
+                values += [f"{x['size_alpha'][ship_type]:.8g}" if t=='LBD' and x.get('size_by_type') else f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE','D']]
                 self.coeff_tree.insert('','end',values=values+[f"{x['year_scale']*100:.0f}" if x.get('year_scale') is not None else '—',f"{x.get('gamma_base',{}).get(ship_type,x['gamma'].get(ship_type,0)):.8g}" if x['year_by_type'] else '—',f"{x['gamma'][ship_type]:.8g}" if x['year_by_type'] else '—', f"{x['mean_years'][ship_type]:.4f}",f"{x['volume_reference']:,.3f}" if x.get('size_by_type') else '—'])
         self.graph_hover.set('함정별 표는 절대 오차율이 큰 순서입니다. |오차율| 20% 이상은 붉은색으로 표시합니다.')
         self.update_year_search()
@@ -385,7 +391,7 @@ class App:
         if not m.get('year_by_type'):
             self.search_note.set('선택 계열은 연도 항이 없어 비율 탐색 대상이 아닙니다. 100계열은 함종별 규모 지수 αt를 사용합니다.');self.draw_search_graph();return
         info=m.get('selection',{});q=m.get('year_scale',1)
-        self.search_note.set(f"선택 {q*100:.0f}% / 실적함 Train MAPE 최소 / 유효 실적함 {m['n']}척 전체 사용.\n탐색 범위 0~100% · 1% 간격. 각 후보에서 나머지 계수와 C를 재추정합니다. 함종 필터와 관계없이 계열 전체에서 선택합니다.")
+        self.search_note.set(f"{m.get('candidate_label','기존 식')} / 선택 {q*100:.0f}% / 실적함 Train MAPE 최소 / 유효 실적함 {m['n']}척 전체 사용.\n탐색 범위 0~100% · 1% 간격. 각 후보에서 나머지 계수와 C를 재추정합니다. 함종 필터와 관계없이 계열 전체에서 선택합니다.")
         def fmt(v):return '—' if v is None else f'{float(v):,.3f}'
         chosen_item=None
         for r in m.get('year_search',[]):
@@ -515,7 +521,7 @@ class App:
             if skipped: messagebox.showinfo('입력 오류 함정 데이터 제외', f'{len(skipped)}척 제외, {len(self.data)}척으로 학습했습니다. 회귀 탭과 결과 엑셀의 제외 행 시트에서 확인하세요.')
             self.status.set('MODEL READY  |  계수 추정 완료. 신규 설계 제원을 입력하세요.')
             self.reg_target.set('SWBS200');self.update_diagnostics()
-            self.notebook.select(self.model_tab);self.reg_tabs.select(self.search_tab)
+            self.notebook.select(self.model_tab);self.reg_tabs.select(self.comparison_tab)
         self.root.after(100,finish)
     def clear_prediction(self):
         self.sum_value.set('—'); self.total_value.set('—'); self.last_weights=None
@@ -527,6 +533,16 @@ class App:
         self.update_year_reference()
         self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
         self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 함종입니다. C는 K와 별도 적용합니다.")
+        self.comparison_tree.delete(*self.comparison_tree.get_children())
+        for row in self.bundle.get('formula_comparison',[]):
+            vals=[]
+            for key in self.comparison_tree['columns']:
+                v=row.get(key,'')
+                if key=='선택':v='YES' if v else ''
+                elif v is None:v='—'
+                elif isinstance(v,float):v=f'{v:,.5g}'
+                vals.append(v)
+            self.comparison_tree.insert('','end',values=vals,tags=('winner',) if row.get('선택') else ())
         self.final_formula_key=None
         self.formula_selector.configure(values=m['classes'])
         if self.formula_ship.get() not in m['classes']:self.formula_ship.set(m['classes'][0])
