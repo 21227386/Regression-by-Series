@@ -187,12 +187,14 @@ class App:
         stats=tk.Frame(tabs,bg=WHITE);notes=tk.Frame(tabs,bg=WHITE)
         for frame,title in [(overview,'Graphs'),(coefs,'Coefficients'),(ships,'Ship Diagnostics'),(stats,'Fit Statistics'),(notes,'Notes')]:tabs.add(frame,text=title)
         self.reg_graph=tk.Canvas(overview,bg='#f3f7fa',height=320,highlightthickness=0)
-        self.reg_graph.pack(fill='both',expand=True,pady=8)
+        # Pack the graph after its information footer so hover details remain visible.
         self.reg_graph.bind('<Configure>',lambda e:self.draw_regression_graphs())
-        self.label(overview,'왼쪽: 실제·예측 중량(tonne) / 오른쪽: 예측 중량 대비 오차율(%)',9,MUTED).pack(anchor='w',pady=3)
-        self.label(overview,'점의 순번으로 함정을 식별합니다. 마우스: 상세 정보 / 클릭: 진단표 이동. 적합도는 학습자료 기준입니다.',9,MUTED).pack(anchor='w',pady=3)
         self.graph_hover=tk.StringVar(value='실적함 데이터를 학습하거나 모델 엑셀을 불러오세요.')
-        tk.Label(overview,textvariable=self.graph_hover,bg=WHITE,fg=INK,font=(KO,9),anchor='w',wraplength=930).pack(fill='x',pady=4)
+        self.hover_label=tk.Label(overview,textvariable=self.graph_hover,bg=WHITE,fg=INK,font=(KO,9),anchor='w',wraplength=930)
+        self.hover_label.pack(side='bottom',fill='x',pady=4)
+        self.label(overview,'점의 순번으로 함정을 식별합니다. 마우스: 상세 정보 / 클릭: 진단표 이동. 적합도는 학습자료 기준입니다.',9,MUTED).pack(side='bottom',anchor='w',pady=3)
+        self.label(overview,'왼쪽: 실제·예측 중량(tonne) / 오른쪽: 예측 중량 대비 오차율(%)',9,MUTED).pack(side='bottom',anchor='w',pady=3)
+        self.reg_graph.pack(fill='both',expand=True,pady=8)
         cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','γ','기준연도']
         self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100])
         self.ship_diagnostics_tab=ships

@@ -54,6 +54,8 @@ class UITests(unittest.TestCase):
                 self.assertEqual(len(app.coeff_tree.get_children()),8)
                 self.assertEqual(app.metric_tree.item(app.metric_tree.get_children()[0])['values'][1],60)
                 self.assertEqual(len(app.reg_graph.find_withtag('ship_number')),120)
+                self.assertTrue(app.hover_label.winfo_ismapped())
+                self.assertGreater(app.hover_label.winfo_height(),10)
                 app.select_graph_ship('001','Selected 001');root.update()
                 self.assertTrue(app.ship_tree.selection())
                 self.assertEqual(str(app.ship_tree.item(app.ship_tree.selection()[0])['values'][0]).zfill(3),'001')
