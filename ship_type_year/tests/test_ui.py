@@ -17,9 +17,11 @@ class UITests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 df=fleet();p=Path(tmp)/'fleet.xlsx';df.to_excel(p,index=False)
                 with patch.object(app,'choose',return_value=str(p)):app.fit()
-                deadline=time.monotonic()+30
+                self.assertTrue(app.analysis_dialog.winfo_exists())
+                deadline=time.monotonic()+60
                 while app.busy and time.monotonic()<deadline:root.update();time.sleep(.02)
                 self.assertFalse(app.busy);self.assertIsNotNone(app.bundle)
+                self.assertFalse(app.analysis_dialog.winfo_exists())
                 self.assertEqual(len(app.search_tree.get_children()),101)
                 self.assertFalse(hasattr(app,'validation_mode'))
                 self.assertTrue(all('CV' not in c for c in app.search_tree['columns']))
@@ -44,9 +46,12 @@ class UITests(unittest.TestCase):
                 p=Path(tmp)/'result.xlsx'
                 with patch.object(app,'choose',return_value=str(p)),patch('app.messagebox.showinfo'):app.report()
                 self.assertTrue(p.exists())
+                app.open_guide();root.update()
+                self.assertEqual(len(app.final_formula_images),7)
+                self.assertTrue(app.use_design_values.get())
                 if os.environ.get('UI_SCREENSHOT'):
                     from PIL import ImageGrab
-                    app.status.set('DEMONSTRATION | SYNTHETIC TEST DATA / 실제 함정 데이터가 아닙니다.');root.update()
+                    app.status.set('DEMONSTRATION | SYNTHETIC TEST DATA / 실제 함정 데이터가 아닙니다.');app.open_estimation();root.update()
                     box=(root.winfo_rootx(),root.winfo_rooty(),root.winfo_rootx()+root.winfo_width(),root.winfo_rooty()+root.winfo_height())
                     ImageGrab.grab(bbox=box).save('ship-type-year-preview.png')
                     app.open_guide();root.update();time.sleep(.3)

@@ -123,7 +123,7 @@ class ModelTests(unittest.TestCase):
         expected={'구축함':0.0,'호위함':.9}
         df['SWBS100']=[1318.8*(v/ref)**expected[c] for v,c in zip(volume,df['함분류'])]
         m=fit_one(df,'SWBS100',TERMS[100])
-        self.assertTrue(m['size_by_type']);self.assertEqual(m['parameters'],4)
+        self.assertTrue(m['size_by_type']);self.assertEqual(m['parameters'],6)
         for cls,alpha in expected.items():self.assertAlmostEqual(m['size_alpha'][cls],alpha)
         self.assertAlmostEqual(m['volume_reference'],ref)
         pair=df.iloc[[0,0]].copy()
@@ -164,7 +164,32 @@ class ModelTests(unittest.TestCase):
             np.testing.assert_allclose(predict(df,b)[TOTAL_SUM_COLUMN],predict(df,loaded)[TOTAL_SUM_COLUMN],rtol=1e-12)
     def test_missing_year_variation_is_explicit(self):
         df=fleet();df.loc[df['함분류']=='호위함','취역연도']=2000
-        with self.assertRaisesRegex(ValueError,'호위함'):train(df)
+        b=train(df)
+        for m in b['models'].values():
+            self.assertFalse(m['year_estimated'])
+            self.assertEqual(m['year_scale'],0)
+            self.assertTrue(m['year_unavailable_reason'])
+            self.assertTrue(all(r['error'] for r in m['year_search'][1:]))
+    def test_all_models_year_search_and_progress(self):
+        calls=[];b=train(fleet(),progress=lambda *v:calls.append(v))
+        self.assertEqual([v[0] for v in calls],list(range(1,708)))
+        self.assertTrue(all(v[1]==707 for v in calls))
+        for m in b['models'].values():
+            self.assertTrue(m['year_by_type']);self.assertTrue(m['year_estimated'])
+            self.assertEqual(len(m['year_search']),101)
+            self.assertEqual(sum(r['selected'] for r in m['year_search']),1)
+    def test_final_numerical_equations_and_images(self):
+        from final_equations import final_equation,render_png,number
+        from model import predict_one
+        b=train(fleet());row=fleet().iloc[0].to_dict();cls=row['함분류']
+        for name,m in b['models'].items():
+            symbolic=final_equation(name,m,cls)
+            self.assertIn('Y-',symbolic);self.assertNotIn('gamma',symbolic)
+            numerical=final_equation(name,m,cls,row)
+            self.assertNotIn('LBD',numerical);self.assertNotIn('Y-',numerical)
+            self.assertIn(number(predict_one(pd.DataFrame([row]),m)[0]),numerical)
+            self.assertTrue(render_png(numerical).startswith(b'\x89PNG'))
+
     def test_model_roundtrip_and_diagnostics(self):
         df=fleet();b=train(df)
         with tempfile.TemporaryDirectory() as tmp:

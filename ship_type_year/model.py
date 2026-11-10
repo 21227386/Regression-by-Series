@@ -17,7 +17,7 @@ INPUT_COLUMNS = ['순번', '함분류', '함유형'] + BASE[1:] + INPUT_WEIGHTS 
 # The supplied equations determine these terms; cruising speed is deliberately unused.
 TERMS = {100: ['LBD'], 200: ['P'], 300: ['PE', 'L'],
          400: [], 500: ['LBD', 'PE'], 600: ['LB']}
-YEAR_TARGETS = {'SWBS200','SWBS300','SWBS400','SWBS500',TOTAL_TARGET}
+YEAR_TARGETS = set(WEIGHTS) | {TOTAL_TARGET}
 ALIASES = {'총 중량': '총중량', '충중량': '총중량', '취취역연도': '취역연도',
            '함정분류': '함분류', '함종': '함분류', '함정번호': '순번', '번호': '순번'}
 
@@ -143,13 +143,21 @@ def fit_hull_by_type(df):
     z=log_volume-np.log(reference)
     cols=[np.ones(len(df))]+[(df['함분류']==c).to_numpy(dtype=float) for c in classes[1:]]
     cols += [(df['함분류']==c).to_numpy(dtype=float)*z for c in classes]
-    x=np.column_stack(cols)
-    if len(df)<=x.shape[1]:raise ValueError(f'SWBS100: 계수 {x.shape[1]}개에 비해 자료 {len(df)}척이 부족합니다.')
-    if np.linalg.matrix_rank(x)<x.shape[1]:raise ValueError('SWBS100: 함종별 규모 효과를 식별할 수 없습니다. 크기 분포를 확인하세요.')
+    core=np.column_stack(cols)
+    means=df.groupby('함분류')['취역연도'].mean().to_dict()
+    centered=(df['취역연도']-df['함분류'].map(means)).to_numpy()/10
+    year_columns=np.column_stack([(df['함분류']==c).to_numpy(dtype=float)*centered for c in classes])
+    full=np.column_stack([core,year_columns])
+    year_estimated=len(df)>full.shape[1] and np.linalg.matrix_rank(full)==full.shape[1]
+    reason='' if year_estimated else '100계열의 함종별 크기·연도 효과를 분리할 자료가 부족하거나 계수가 중복됩니다. 0%만 계산합니다.'
+    x=full if year_estimated else core
+    if len(df)<=core.shape[1]:raise ValueError(f'SWBS100: 계수 {x.shape[1]}개에 비해 자료 {len(df)}척이 부족합니다.')
+    if np.linalg.matrix_rank(core)<core.shape[1]:raise ValueError('SWBS100: 함종별 규모 효과를 식별할 수 없습니다. 크기 분포를 확인하세요.')
     actual=df['SWBS100'].to_numpy();y=np.log(actual)
     beta=np.linalg.lstsq(x,y,rcond=None)[0]
     residual=y-x@beta;smear=float(np.exp(residual).mean());prediction=np.exp(x@beta)*smear
     alpha={c:float(beta[len(classes)+j]) for j,c in enumerate(classes)}
+    gamma={c:float(beta[core.shape[1]+j]) if year_estimated else 0.0 for j,c in enumerate(classes)}
     dt={c:1.0 if j==0 else float(np.exp(beta[j])) for j,c in enumerate(classes)}
     means=df.groupby('함분류')['취역연도'].mean().to_dict()
     den=float(((actual-actual.mean())**2).sum())
@@ -157,11 +165,11 @@ def fit_hull_by_type(df):
     for j,(idx,row) in enumerate(df.iterrows()):
         cls=row['함분류']
         diagnostics.append({'순번':str(row.get('순번',int(idx)+1)),'엑셀 행':int(idx)+2,'함종':cls,'함유형':str(row.get('함유형','')),
-                            '취역연도':float(row['취역연도']),'함종평균연도':float(means[cls]),'γt':0.0,'연도보정값':1.0,
+                            '취역연도':float(row['취역연도']),'함종평균연도':float(means[cls]),'γt':gamma[cls],'연도보정값':float(np.exp(gamma[cls]*(row['취역연도']-means[cls])/10)),
                             'αt':alpha[cls],'기준LBD':reference,'실제중량':float(actual[j]),'예측중량':float(prediction[j]),
                             '잔차':float(actual[j]-prediction[j]),'오차율(%)':float((prediction[j]-actual[j])/actual[j]*100),'Dt':dt[cls]})
     # Keep the ordinary coefficient-table layout; the zero LBD slot is replaced by per-type SizeAlpha.
-    return {'target':'SWBS100','terms':['LBD'],'classes':classes,'mean_years':means,'gamma':{},'year_by_type':False,
+    return {'target':'SWBS100','terms':['LBD'],'classes':classes,'mean_years':means,'gamma':gamma,'year_by_type':True,'year_estimated':year_estimated,'year_unavailable_reason':reason,
             'coef':[float(beta[0]),0.0]+[float(v) for v in beta[1:len(classes)]],
             'size_by_type':True,'size_alpha':alpha,'volume_reference':reference,'smearing':smear,
             'class_counts':{c:int(counts[c]) for c in classes},'diagnostics':diagnostics,
@@ -175,10 +183,11 @@ def fit_one(df, target, terms):
     classes = sorted(counts.index.tolist(), key=lambda c: (-int(counts[c]), SHIP_TYPES.index(c)))
     mean_years={c:float(df.loc[df['함분류']==c,'취역연도'].mean()) for c in classes}
     year_by_type=target in YEAR_TARGETS
-    if year_by_type:
-        unsupported=[c for c in classes if df.loc[df['함분류']==c,'취역연도'].nunique()<2]
-        if unsupported:raise ValueError(target+': 함종별 γ를 추정하려면 각 함종에 서로 다른 취역연도가 2개 이상 필요합니다: '+', '.join(unsupported))
-    x = design(df, terms, classes, mean_years, year_by_type)
+    core=design(df,terms,classes,mean_years,False)
+    full=design(df,terms,classes,mean_years,True)
+    year_estimated=len(df)>full.shape[1] and np.linalg.matrix_rank(full)==full.shape[1]
+    reason='' if year_estimated else target+': 함종별 연도 효과를 식별할 자료가 부족하거나 계수가 중복됩니다. 0%만 계산합니다.'
+    x=full if year_estimated else core
     if len(df) <= x.shape[1]:
         raise ValueError(f'{target}: {x.shape[1]}개 계수에 비해 자료 {len(df)}척이 부족합니다. 최소 {x.shape[1]+1}척 필요(안정적 추정에는 더 많은 자료 권장).')
     if np.linalg.matrix_rank(x) < x.shape[1]:
@@ -187,14 +196,14 @@ def fit_one(df, target, terms):
     coef = np.linalg.lstsq(x, y, rcond=None)[0]
     full_coef=coef.copy()
     split=1+len(terms)+len(classes)-1
-    gamma={c:float(full_coef[split+j]) for j,c in enumerate(classes)} if year_by_type else {}
+    gamma={c:float(full_coef[split+j]) for j,c in enumerate(classes)} if year_estimated else {c:0.0 for c in classes}
     coef=full_coef[:split]
     residual = y - x @ full_coef
     smear = float(np.exp(residual).mean())
     predicted = np.exp(x @ full_coef) * smear
     actual = df[target].to_numpy()
     denom = float(((actual - actual.mean()) ** 2).sum())
-    return {'target': target, 'terms': terms, 'classes': classes, 'mean_years': mean_years, 'gamma': gamma, 'year_by_type': year_by_type,
+    return {'target': target, 'terms': terms, 'classes': classes, 'mean_years': mean_years, 'gamma': gamma, 'year_by_type': True,'year_estimated':year_estimated,'year_unavailable_reason':reason,
             'coef': coef.tolist(), 'smearing': smear,
             'class_counts': {c: int(counts[c]) for c in classes},
             'diagnostics': [{'순번': str(df.at[idx, '순번']) if '순번' in df else str(int(idx)+1), '엑셀 행': int(idx) + 2, '함종': str(df.at[idx, '함분류']), '함유형': str(df.at[idx, '함유형']) if '함유형' in df else '',
@@ -220,13 +229,14 @@ def predict_one(df, model):
             volume=df['길이']*df['폭']*df['깊이']
             offset=1+len(model['terms'])
             dt={c:0.0 if j==0 else model['coef'][offset+j-1] for j,c in enumerate(model['classes'])}
-            return np.exp(model['coef'][0]+df['함분류'].map(dt).to_numpy()+df['함분류'].map(model['size_alpha']).to_numpy()*np.log(volume.to_numpy()/model['volume_reference']))*model['smearing']
+            year_effect=df['함분류'].map(model.get('gamma',{})).fillna(0).to_numpy()*(df['취역연도']-df['함분류'].map(model['mean_years'])).to_numpy()/10
+            return np.exp(model['coef'][0]+df['함분류'].map(dt).to_numpy()+df['함분류'].map(model['size_alpha']).to_numpy()*np.log(volume.to_numpy()/model['volume_reference'])+year_effect)*model['smearing']
     x = design(df, model['terms'], model['classes'], model['mean_years'], model['year_by_type'])
     coef=model['coef']+([model['gamma'][c] for c in model['classes']] if model['year_by_type'] else [])
     with np.errstate(over='raise', invalid='raise'):
         return np.exp(x @ np.asarray(coef)) * model['smearing']
 
-def train(df):
+def train(df,progress=None):
     from year_search import select_year_scale
     df = normalize_types(df)
     if '총중량' in df:
@@ -247,7 +257,12 @@ def train(df):
             models[TOTAL_MODEL] = fit_one(df, TOTAL_TARGET, ['LBD', 'P'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
-    models={name:select_year_scale(df,m) for name,m in models.items()}
+    for index,(name,m) in enumerate(list(models.items())):
+        def report(done,total,percent,name=name,index=index):
+            if progress:progress(index*101+done,len(models)*101,f'{name} · 연도 효과 {percent}%')
+        models[name]=select_year_scale(df,m,report)
+    for name,m in models.items():
+        if m.get('year_unavailable_reason'):warnings.append(m['year_unavailable_reason'])
     return {'version': 3, 'mode':'ship_type_year_exclude_700', 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
 
 def predict(df, bundle):
@@ -279,7 +294,7 @@ def coefficients(bundle):
                   }[t] for t in terms] + ['Dt'] + (['exp[γt(Y−함종평균연도)/10]'] if m['year_by_type'] else []) + ['C'])}
         row.update({t + '_회귀계수': float(v) for t, v in zip(terms, b[1:p])})
         for j, cls in enumerate(m['classes']):
-            rows.append({**row, **({'LBD_회귀계수':m['size_alpha'][cls],'αt':m['size_alpha'][cls],'기준LBD(m³)':m['volume_reference'],'식':'W100 = K (LBD/기준LBD)^αt Dt C'} if m.get('size_by_type') else {}), '함종': cls, '학습척수': m.get('class_counts', {}).get(cls), 'γt':m['gamma'].get(cls), '함종평균연도':m['mean_years'][cls], '선택연도효과(%)':None if m.get('year_scale') is None else m['year_scale']*100, '기본γt':m.get('gamma_base',{}).get(cls), 'Dt': 1.0 if j == 0 else float(np.exp(b[p+j-1]))})
+            rows.append({**row, **({'LBD_회귀계수':m['size_alpha'][cls],'αt':m['size_alpha'][cls],'기준LBD(m³)':m['volume_reference'],'식':'W100 = K (LBD/기준LBD)^αt Dt exp[γt(Y−함종평균연도)/10] C'} if m.get('size_by_type') else {}), '함종': cls, '학습척수': m.get('class_counts', {}).get(cls), 'γt':m['gamma'].get(cls), '함종평균연도':m['mean_years'][cls], '선택연도효과(%)':None if m.get('year_scale') is None else m['year_scale']*100, '기본γt':m.get('gamma_base',{}).get(cls), 'Dt': 1.0 if j == 0 else float(np.exp(b[p+j-1]))})
     return pd.DataFrame(rows)
 
 def export(path, df, bundle):
@@ -355,7 +370,7 @@ def save_model_excel(path, bundle):
     for name, m in bundle['models'].items():
         nterms = len(m['terms'])
         parameters.append({'Target': name, 'K': float(np.exp(m['coef'][0])), 'C': m['smearing'],
-                           'SizeByType':m.get('size_by_type',False),'VolumeReference':m.get('volume_reference'), 'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'], 'YearScale':m.get('year_scale'),
+                           'SizeByType':m.get('size_by_type',False),'VolumeReference':m.get('volume_reference'), 'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'],'YearEstimated':m.get('year_estimated',True),'YearIssue':m.get('year_unavailable_reason',''), 'YearScale':m.get('year_scale'),
                            'ReferenceType': m['classes'][0], 'N': m['n'], 'Parameters': m['parameters'],
                            'RMSE_tonne': m['rmse_tonne'], 'MAPE_percent': m['mape_percent'],
                            'R2': m['r2'], 'ConditionNumber': m['condition_number'],
@@ -433,7 +448,7 @@ def load_model_excel(path):
             if ref not in set(group['ShipType']): raise ValueError('기준 함종이 없습니다.')
             classes=[ref]+[c for c in group['ShipType'] if c!=ref]
             mean_years={r['ShipType']:finite(r['MeanYear'],'함종평균연도') for _,r in group.iterrows()}
-            year_by_type=name not in ('SWBS100','SWBS600')
+            year_by_type=bool(row['YearByType'])
             if row['YearByType'] != year_by_type:raise ValueError('연도 모형 설정이 다릅니다.')
             gamma={r['ShipType']:finite(r['Gamma'],'γt') for _,r in group.iterrows()} if year_by_type else {}
             dt={r['ShipType']: finite(r['Dt'],'Dt',True) for _,r in group.iterrows()}
@@ -456,6 +471,7 @@ def load_model_excel(path):
             volume_reference=finite(row['VolumeReference'],'기준LBD',True) if size_by_type else None
             size_alpha={r['ShipType']:finite(r['SizeAlpha'],'αt') for _,r in group.iterrows()} if size_by_type else {}
             models[name]={'size_by_type':size_by_type,'size_alpha':size_alpha,'volume_reference':volume_reference,
+                          'year_estimated':bool(row.get('YearEstimated',True)),'year_unavailable_reason':'' if pd.isna(row.get('YearIssue','')) else row.get('YearIssue',''),
                           'year_scale':scale,'gamma_base':base_gamma,
                           'year_search':search[search['Target']==name].drop(columns='Target').to_dict('records') if not search.empty else [],
                           'selection':selections[selections['Target']==name].drop(columns='Target').to_dict('records')[0] if not selections.empty and name in set(selections['Target']) else {},

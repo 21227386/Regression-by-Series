@@ -1,5 +1,8 @@
 """Naval Ship Weight Estimator — native Windows desktop interface."""
 import threading
+import queue
+import math
+import base64
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -19,6 +22,7 @@ class App:
     def __init__(self, root):
         self.root, self.bundle, self.data = root, None, None
         self.busy = False
+        self.final_formula_key=None
         root.title(TITLE); root.geometry('1380x900'); root.minsize(1180, 800)
         root.configure(bg=BG)
         root.option_add('*Font', (KO, 10))
@@ -198,6 +202,7 @@ class App:
         for frame,title in [(overview,'Graphs'),(coefs,'Coefficients'),(ships,'Ship Diagnostics'),(stats,'Fit Statistics'),(notes,'Notes')]:tabs.add(frame,text=title)
         self.guide_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(1,self.guide_tab,text='Equations & Guide')
         self.build_guide(self.guide_tab)
+        tabs.bind('<<NotebookTabChanged>>',lambda e:self.root.after_idle(self.refresh_final_equations),add='+')
         self.search_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(2,self.search_tab,text='Year Effect Search')
         self.search_note=tk.StringVar(value='연도 효과 0%~100% (1% 간격) 후보를 비교합니다.')
         tk.Label(self.search_tab,textvariable=self.search_note,bg=WHITE,fg=INK,font=(KO,10),wraplength=930,justify='left',anchor='w').pack(fill='x',padx=10,pady=8)
@@ -239,6 +244,17 @@ class App:
         self.label(content,'Regression Equations & Coefficients',20,TEAL,'#edf2f5',True,True).pack(anchor='w',pady=(0,6))
         tk.Label(content,text='왼쪽은 수식 이미지, 오른쪽은 해당 변수와 계수의 의미입니다. 모든 중량은 tonne입니다.',
                  font=(KO,10),fg=MUTED,bg='#edf2f5',anchor='w').pack(fill='x',pady=(0,12))
+        self.final_panel=tk.Frame(content,bg=WHITE,padx=12,pady=12);self.final_panel.pack(fill='x',pady=(0,14))
+        self.label(self.final_panel,'Final Fitted Equations / 최종 추출식',16,TEAL,WHITE,True,True).pack(anchor='w')
+        choices=tk.Frame(self.final_panel,bg=WHITE);choices.pack(fill='x',pady=8)
+        self.formula_ship=tk.StringVar()
+        self.formula_selector=ttk.Combobox(choices,textvariable=self.formula_ship,state='readonly',width=15)
+        self.formula_selector.pack(side='left');self.formula_selector.bind('<<ComboboxSelected>>',lambda e:self.refresh_final_equations(force=True))
+        self.use_design_values=tk.BooleanVar(value=False)
+        tk.Checkbutton(choices,text='설계 제원도 숫자로 대입',variable=self.use_design_values,command=lambda:self.refresh_final_equations(force=True),bg=WHITE,font=(KO,10)).pack(side='left',padx=12)
+        self.final_body=tk.Frame(self.final_panel,bg=WHITE);self.final_body.pack(fill='x')
+        self.label(self.final_body,'실적함 학습 후 선택한 함종의 최종 계수가 수식에 표시됩니다.',10,MUTED).pack(anchor='w')
+        self.final_formula_images=[]
         self.equation_images=[];self.equation_description_labels=[]
         assets=Path(__file__).resolve().parent/'assets'/'equations'
         for key,title,equation,description in GUIDE_ROWS:
@@ -264,6 +280,68 @@ class App:
         self.root.bind_all('<MouseWheel>',scroll,add='+')
         self.root.bind_all('<Button-4>',scroll,add='+');self.root.bind_all('<Button-5>',scroll,add='+')
         self.guide_canvas=canvas
+
+    def refresh_final_equations(self,force=False):
+        if not self.bundle or self.busy:return
+        if self.reg_tabs.select()!=str(self.guide_tab) and not force:return
+        from final_equations import final_equation,render_png
+        cls=self.formula_ship.get()
+        if cls not in self.bundle['models']['SWBS100']['classes']:return
+        design=None
+        if self.use_design_values.get() and self.data is not None and len(self.data)==1 and '연도 적용' in self.data:
+            design=self.data.iloc[0].to_dict()
+            if design['함분류']!=cls:design=None
+        width=min(900,max(550,self.guide_canvas.winfo_width()-70))
+        key=(id(self.bundle),cls,self.use_design_values.get(),None if design is None else tuple((k,str(v)) for k,v in design.items()),width)
+        if not force and key==self.final_formula_key:return
+        self.root.configure(cursor='watch');self.root.update_idletasks()
+        try:
+            for child in self.final_body.winfo_children():child.destroy()
+            self.final_formula_images=[]
+            self.label(self.final_body,'계수는 표시용으로 7자리 유효숫자로 반올림합니다. 실제 계산은 원래 정밀도를 사용합니다.',9,MUTED).pack(anchor='w',pady=4)
+            if self.use_design_values.get() and design is None:
+                self.label(self.final_body,'Weight Estimation에서 같은 함종의 설계 제원을 입력해 예측하면 제원 숫자도 대입됩니다.',9,MUTED).pack(anchor='w')
+            for name,m in self.bundle['models'].items():
+                self.label(self.final_body,name+' / '+cls,11,TEAL,WHITE,True).pack(anchor='w',pady=(10,0))
+                formula=final_equation(name,m,cls,design)
+                photo=tk.PhotoImage(data=base64.b64encode(render_png(formula,width))).subsample(2)
+                self.final_formula_images.append(photo)
+                tk.Label(self.final_body,image=photo,bg=WHITE,anchor='w').pack(anchor='w')
+                percent=m.get('year_scale')
+                info='연도 효과 '+('—' if percent is None else f'{percent*100:.0f}%')+' / '+m.get('selection',{}).get('status','')
+                if m.get('year_unavailable_reason'):info+=' / '+m['year_unavailable_reason']
+                tk.Label(self.final_body,text=info,bg=WHITE,fg=MUTED,font=(KO,9),wraplength=width,justify='left').pack(anchor='w')
+            self.label(self.final_body,'합산 중량(700계열 제외) = 위 SWBS100~600의 예측 중량 합계',11,INK,WHITE,True).pack(anchor='w',pady=8)
+            self.final_formula_key=key
+        finally:self.root.configure(cursor='')
+
+    def show_analysis(self):
+        self.analysis_dialog=tk.Toplevel(self.root);self.analysis_dialog.title('해석 중')
+        self.analysis_dialog.transient(self.root);self.analysis_dialog.resizable(False,False)
+        x=self.root.winfo_rootx()+max(0,(self.root.winfo_width()-460)//2)
+        y=self.root.winfo_rooty()+max(0,(self.root.winfo_height()-210)//2)
+        self.analysis_dialog.geometry(f'460x210+{x}+{y}');self.analysis_dialog.configure(bg=WHITE)
+        self.analysis_dialog.protocol('WM_DELETE_WINDOW',lambda:None)
+        self.analysis_dialog.grab_set()
+        tk.Label(self.analysis_dialog,text='실적함 해석 중...',font=(KO,15,'bold'),fg=TEAL,bg=WHITE).pack(pady=(12,5))
+        canvas=tk.Canvas(self.analysis_dialog,width=410,height=50,bg=WHITE,highlightthickness=0);canvas.pack()
+        self.analysis_message=tk.StringVar(value='기초 회귀계수를 추정하고 있습니다.')
+        tk.Label(self.analysis_dialog,textvariable=self.analysis_message,font=(KO,10),fg=INK,bg=WHITE).pack(pady=4)
+        self.analysis_progress=ttk.Progressbar(self.analysis_dialog,maximum=707,length=410);self.analysis_progress.pack(pady=8)
+        self.analysis_tick=0
+        def animate():
+            if not self.busy or not self.analysis_dialog.winfo_exists():return
+            canvas.delete('all');self.analysis_tick+=1
+            cx=205+130*math.sin(self.analysis_tick/7)
+            canvas.create_line(45,33,365,33,fill='#d5e3ea',width=2)
+            canvas.create_oval(cx-13,8,cx+13,34,outline=TEAL,width=3)
+            canvas.create_line(cx+10,30,cx+22,42,fill=TEAL,width=5)
+            self.root.after(75,animate)
+        animate()
+
+    def close_analysis(self):
+        if hasattr(self,'analysis_dialog') and self.analysis_dialog.winfo_exists():
+            self.analysis_dialog.grab_release();self.analysis_dialog.destroy()
 
     def selected_type(self):
         choice=self.ship_filter.get()
@@ -417,15 +495,18 @@ class App:
         p=self.choose()
         if not p:return
         self.busy=True; self.status.set('TRAINING  |  0%~100% (1% 간격) 후보 재학습·실적함 적합도 비교 중…')
-        state={}
+        state={};updates=queue.Queue();self.show_analysis()
+        def report(done,total,message):updates.put((done,total,message))
         def worker():
             try:
-                data=read_excel(p); state['result']=(data,train(data))
+                data=read_excel(p); state['result']=(data,train(data,progress=report))
             except Exception as e:state['error']=str(e)
         thread=threading.Thread(target=worker,daemon=True);thread.start()
         def finish():
+            while not updates.empty():
+                done,total,message=updates.get_nowait();self.analysis_progress.configure(maximum=total,value=done);self.analysis_message.set(message)
             if thread.is_alive(): self.root.after(100,finish);return
-            self.busy=False
+            self.busy=False;self.close_analysis()
             if 'error' in state:
                 self.status.set('UPLOAD FAILED  |  기존 모델은 유지됩니다.');messagebox.showerror('학습 실패',state['error']);return
             self.data,self.bundle=state['result'];self.clear_prediction()
@@ -446,6 +527,9 @@ class App:
         self.update_year_reference()
         self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
         self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 함종입니다. C는 K와 별도 적용합니다.")
+        self.final_formula_key=None
+        self.formula_selector.configure(values=m['classes'])
+        if self.formula_ship.get() not in m['classes']:self.formula_ship.set(m['classes'][0])
         self.reg_selector.configure(values=list(self.bundle['models']))
         if self.reg_target.get() not in self.bundle['models']:self.reg_target.set('SWBS100')
         classes=m['classes']
@@ -498,7 +582,7 @@ class App:
         return normalize_types(pd.DataFrame([row]))
     def estimate(self):
         self.require();data=self.design_data();result=predict(data,self.bundle)
-        self.data=data;self.render_result(result.iloc[0]);self.status.set('ESTIMATION COMPLETE  |  Export Results to Excel로 저장하세요.')
+        self.data=data;self.formula_ship.set(data.iloc[0]['함분류']);self.use_design_values.set(True);self.final_formula_key=None;self.render_result(result.iloc[0]);self.status.set('ESTIMATION COMPLETE  |  Export Results to Excel로 저장하세요.')
     def render_result(self,row):
         self.sum_value.set(f"{row[TOTAL_SUM_COLUMN]:,.2f} tonne")
         key=TOTAL_MODEL+'_예측_tonne'
@@ -516,4 +600,9 @@ class App:
         if p:export(p,self.data,self.bundle);self.status.set('REPORT SAVED  |  '+p);messagebox.showinfo('저장 완료',p)
 
 if __name__=='__main__':
-    root=tk.Tk();App(root);root.mainloop()
+    import sys
+    if len(sys.argv)==3 and sys.argv[1]=='--verify-equation-renderer':
+        from final_equations import render_png
+        Path(sys.argv[2]).write_bytes(render_png(r'\widehat W_{100}=1318.8\left(\frac{LBD}{15000}\right)^{0.8}\times1.2\exp\left[0.03\frac{Y-2005}{10}\right]\times1.01'))
+    else:
+        root=tk.Tk();App(root);root.mainloop()
