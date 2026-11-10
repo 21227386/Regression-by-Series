@@ -1,0 +1,44 @@
+name: Build Ship Type Year SWBS Regression
+on:
+  workflow_dispatch:
+  push:
+    branches: [ship-type-year]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ship_type_year
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt pyinstaller==6.16.0 pillow==11.3.0
+      - name: Prepare desktop preview
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
+      - run: python -m unittest discover -s tests -v
+        env:
+          UI_SCREENSHOT: '1'
+      - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SWBS_Regression --add-data "assets;assets" app.py
+      - name: Verify EXE starts
+        shell: pwsh
+        run: |
+          $app = Start-Process -FilePath "dist/SWBS_Regression.exe" -PassThru
+          Start-Sleep -Seconds 15
+          if ($app.HasExited) { throw "EXE exited: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SWBS-Regression-Ship-Type-Year
+          path: ship_type_year/dist/SWBS_Regression.exe
+      - name: Publish separate release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ship-type-year-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" dist/SWBS_Regression.exe ship-type-year-preview.png ship-type-year-equations.png --target "$GITHUB_SHA" --title "SWBS Regression - Ship Type Year ${GITHUB_RUN_NUMBER}" --notes "Separate model with ship-type-specific year slopes and mean commissioning years. Refit the full fleet; existing versions remain unchanged."

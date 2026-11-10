@@ -1,0 +1,68 @@
+import tempfile
+import unittest
+from pathlib import Path
+import numpy as np
+import pandas as pd
+from model import TERMS, YEAR_TARGETS, WEIGHTS, design, train, predict, read_excel, save_model_excel, load_model_excel, coefficients
+
+def fleet():
+    rng=np.random.default_rng(67);n=100
+    df=pd.DataFrame({'순번':[f'{i+1:03d}' for i in range(n)],'함분류':['구축함','호위함']*50,'함유형':['DDG','FFG']*50,
+        '취역연도':np.array([1980+i%20 if i%2==0 else 2000+i%20 for i in range(n)]),
+        '길이':rng.uniform(70,180,n),'폭':rng.uniform(10,25,n),'깊이':rng.uniform(6,15,n),
+        '소요마력':rng.uniform(10000,80000,n),'소요전력':rng.uniform(1000,12000,n),'순항속력':rng.uniform(12,22,n)})
+    means=df.groupby('함분류')['취역연도'].mean().to_dict()
+    for i,terms in TERMS.items():
+        flag=f'SWBS{i}' in YEAR_TARGETS
+        x=design(df,terms,['구축함','호위함'],means,flag)
+        coef=[1.2]+[.6]*len(terms)+[.3]+([.12,-.2] if flag else [])
+        df[f'SWBS{i}']=np.exp(x@np.array(coef))
+    x=design(df,['LBD','P'],['구축함','호위함'],means,True)
+    df['총중량']=np.exp(x@np.array([1.4,.7,.1,.3,.08,-.11]))
+    return df
+
+class ModelTests(unittest.TestCase):
+    def test_recover_class_slopes_and_means(self):
+        df=fleet();b=train(df)
+        for name,m in b['models'].items():
+            if m['year_by_type']:
+                expected=[.08,-.11] if name=='총중량_독립회귀' else [.12,-.2]
+                np.testing.assert_allclose(list(m['gamma'].values()),expected,atol=1e-10)
+            self.assertEqual(m['mean_years'],df.groupby('함분류')['취역연도'].mean().to_dict())
+            self.assertNotIn('mean_year',m)
+        out=predict(df,b)
+        for c in WEIGHTS:np.testing.assert_allclose(out[c+'_예측_tonne'],df[c],rtol=1e-9)
+        np.testing.assert_allclose(out['총중량_독립회귀_예측_tonne'],df['총중량'],rtol=1e-9)
+        np.testing.assert_allclose(out['총중량_SWBS합계_tonne'],out[[c+'_예측_tonne' for c in WEIGHTS]].sum(axis=1))
+    def test_class_specific_ten_year_change_and_centering(self):
+        df=fleet();b=train(df)
+        for cls in ['구축함','호위함']:
+            row=df.iloc[[0]].copy();row['함분류']=cls
+            row['취역연도']=b['models']['SWBS200']['mean_years'][cls]
+            later=row.copy();later['취역연도']+=10
+            first=predict(row,b).iloc[0];second=predict(later,b).iloc[0]
+            for name,m in b['models'].items():
+                ratio=np.exp(m['gamma'][cls]) if m['year_by_type'] else 1
+                self.assertAlmostEqual(second[name+'_예측_tonne']/first[name+'_예측_tonne'],ratio)
+        diagnostics=b['models']['SWBS200']['diagnostics']
+        for row in diagnostics:
+            cls=row['함종'];m=b['models']['SWBS200']
+            self.assertAlmostEqual(row['연도보정값'],np.exp(m['gamma'][cls]*(row['취역연도']-m['mean_years'][cls])/10))
+    def test_missing_year_variation_is_explicit(self):
+        df=fleet();df.loc[df['함분류']=='호위함','취역연도']=2000
+        with self.assertRaisesRegex(ValueError,'호위함'):train(df)
+    def test_model_roundtrip_and_diagnostics(self):
+        df=fleet();b=train(df)
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'model.xlsx';save_model_excel(p,b);loaded=load_model_excel(p)
+            for name,m in b['models'].items():
+                np.testing.assert_allclose(predict(df,b)[name+'_예측_tonne'],predict(df,loaded)[name+'_예측_tonne'],rtol=1e-12)
+                self.assertEqual(m['mean_years'],loaded['models'][name]['mean_years'])
+            self.assertEqual(loaded['models']['SWBS200']['diagnostics'][0]['순번'],'001')
+            self.assertIn('γt',coefficients(b))
+    def test_patrol_pooling_and_input_exclusions(self):
+        df=fleet();df.loc[df['함분류']=='호위함','함분류']='초계정'
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'fleet.xlsx';df.to_excel(p,index=False);data=read_excel(p)
+            b=train(data);self.assertIn('호위함',b['models']['SWBS200']['gamma'])
+            self.assertNotIn('초계정',b['models']['SWBS200']['gamma'])
