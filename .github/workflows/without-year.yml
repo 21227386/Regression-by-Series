@@ -1,0 +1,44 @@
+name: Build without year Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    branches: [without-year]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: without_year
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt pyinstaller==6.16.0 pillow==11.3.0
+      - name: Prepare desktop preview
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
+      - run: python -m unittest discover -s tests -v
+        env:
+          UI_SCREENSHOT: '1'
+      - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name "without year" --add-data "assets;assets" app.py
+      - name: Verify EXE starts
+        shell: pwsh
+        run: |
+          $app = Start-Process -FilePath "dist/without year.exe" -PassThru
+          Start-Sleep -Seconds 15
+          if ($app.HasExited) { throw "EXE exited: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: without-year-Windows
+          path: without_year/dist/without year.exe
+      - name: Publish separate release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="without-year-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$tag" "dist/without year.exe" "without year Input File Template.xlsx" without-year-preview.png without-year-equations.png --target "$GITHUB_SHA" --title "without year Windows build ${GITHUB_RUN_NUMBER}" --notes "Separate program without year correction. Refit coefficients from the full reference fleet. Existing program and releases are preserved."
