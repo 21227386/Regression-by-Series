@@ -111,7 +111,7 @@ class App:
         fields = [('함분류','Ship Type / 함종'), ('길이','Length L / 길이 (m)'),
                   ('폭','Beam B / 폭 (m)'), ('깊이','Depth D / 깊이 (m)'),
                   ('소요마력','Propulsion Power / 소요마력 (hp)'), ('소요전력','Electrical Power / 소요전력 (kW)'),
-                  ('취역연도','Commissioning Year / 취역연도 (선택)')]
+                  ('취역연도','Expected Year / 취역 예상연도 (year)')]
         for i, (key, caption) in enumerate(fields):
             cell = tk.Frame(form, bg=WHITE); cell.grid(row=i//4,column=i%4,sticky='ew',padx=(0,12),pady=6)
             form.columnconfigure(i%4, weight=1)
@@ -124,11 +124,11 @@ class App:
             e.pack(fill='x',ipady=4,pady=(4,0))
         row = tk.Frame(panel,bg=WHITE); row.pack(fill='x',pady=(10,4))
         self.estimate_button=self.button(row,'Estimate Ship Weight',self.estimate,True); self.estimate_button.pack(side='left')
-        self.estimation_assumption=tk.StringVar(value='취역연도 미입력 시 학습 평균연도를 적용합니다. 순항속력은 현재 식에 사용하지 않습니다.')
+        self.estimation_assumption=tk.StringVar(value='취역 예상연도 미입력 시 학습 평균연도를 적용합니다. 순항속력은 현재 식에 사용하지 않습니다.')
         tk.Label(row,textvariable=self.estimation_assumption,font=(KO,9),fg=MUTED,bg=WHITE,wraplength=600,justify='left').pack(side='left',padx=14)
         cards=tk.Frame(panel,bg=WHITE); cards.pack(fill='x',pady=12)
         self.sum_value=tk.StringVar(value='—'); self.total_value=tk.StringVar(value='—')
-        for title,var,color in [('Series Sum / 계열 합산 중량',self.sum_value,TEAL),('Direct Regression / 경하중량 직접 회귀',self.total_value,INK)]:
+        for title,var,color in [('SWBS100–700 Sum / 계열별 합산 중량',self.sum_value,TEAL),('Lightship Regression / 전체 경하중량 직접 추정',self.total_value,INK)]:
             card=tk.Frame(cards,bg='#edf4f6',highlightbackground='#d3e1e7',highlightthickness=1,padx=14,pady=10); card.pack(side='left',fill='both',expand=True,padx=(0,10))
             self.label(card,title,11,color,'#edf4f6',True,True).pack(anchor='w')
             tk.Label(card,textvariable=var,font=(EN,25,'bold'),fg=color,bg='#edf4f6').pack(anchor='w')
@@ -242,7 +242,7 @@ class App:
         put('Wsum은 계열별 예측 합계이고, Wtotal은 실제 경하중량을 학습한 별도 직접 회귀값입니다. 두 값은 일치하도록 강제하지 않습니다. SWBS 합계의 포함 범위가 경하중량과 같은지 확인하세요.')
         put('Year Adjustment / 취역연도 보정','title')
         put('F(Y) = exp[γ (Y − Ȳ) / 10]','equation')
-        put('Y: 입력 취역연도, Ȳ: 해당 모형의 학습 평균 취역연도. 연도 입력을 생략하면 학습 평균연도에서 예측하며 F(Y)=1입니다. 미래 연도로 추정하려면 선택 입력란에 연도를 넣으세요.')
+        put('Y: 실적함의 취역연도 또는 신규 함정의 취역 예상연도, Ȳ: 해당 모형의 학습 평균 취역연도. 연도 입력을 생략하면 학습 평균연도에서 예측하며 F(Y)=1입니다. 취역 예상연도 입력란에 미래 연도를 넣으면 200·300·400·500·700계열과 총중량 직접 회귀에 학습된 γ를 적용합니다. 100·600계열은 원래 식에 연도 항이 없습니다.')
         put('Definitions / 변수·계수의 의미','title')
         for line in [
             'K : 계열별 기본 중량계수. 총중량 직접 회귀에도 별도 K가 있습니다.',
@@ -405,7 +405,7 @@ class App:
     def refresh_model(self,source):
         import math
         m=self.bundle['models']['SWBS100'];ref=m['classes'][0]
-        self.estimation_assumption.set(f"취역연도 미입력 시 학습 평균 {m['mean_year']:.2f}년을 적용합니다. 순항속력은 식에 사용하지 않습니다.")
+        self.estimation_assumption.set(f"취역 예상연도 미입력 시 학습 평균 {m['mean_year']:.2f}년을 적용합니다. 순항속력은 식에 사용하지 않습니다.")
         self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
         self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 함종입니다. C는 K와 별도 적용합니다.")
         self.reg_selector.configure(values=list(self.bundle['models']))
@@ -444,9 +444,9 @@ class App:
             except ValueError:raise ValueError(f'{key}: 숫자를 입력하세요.')
             import math
             if not math.isfinite(value) or (key!='취역연도' and value<=0):raise ValueError(f'{key}: 유효한 양수를 입력하세요.')
-            if key=='취역연도' and (not 1800<=value<=2200 or value%1):raise ValueError('취역연도는 1800~2200의 정수여야 합니다.')
+            if key=='취역연도' and (not 1800<=value<=2200 or value%1):raise ValueError('취역 예상연도는 1800~2200의 정수여야 합니다.')
             row[key]=value
-        if '연도 적용' not in row:row['연도 적용']='사용자 입력연도'
+        if '연도 적용' not in row:row['연도 적용']='입력 취역 예상연도'
         return normalize_types(pd.DataFrame([row]))
     def estimate(self):
         self.require();data=self.design_data();result=predict(data,self.bundle)
@@ -458,7 +458,7 @@ class App:
         self.last_weights=[float(row[f'SWBS{i}_예측_tonne']) for i in range(100,800,100)]
         self.result_tree.delete(*self.result_tree.get_children())
         for i,(name,w) in enumerate(zip(SERIES,self.last_weights)):self.result_tree.insert('','end',values=(str((i+1)*100),name,f'{w:,.2f}'))
-        note=f"함종: {row['함분류']} / 연도: {row['취역연도']:.2f} ({row.get('연도 적용','입력연도')})  |  "+(row['주의'] or '학습자료의 입력 범위 내')
+        note=f"함종: {row['함분류']} / 취역 예상연도: {row['취역연도']:.2f} ({row.get('연도 적용','입력연도')})  |  "+(row['주의'] or '학습자료의 입력 범위 내')
         if key not in row:note+='  |  실제 총중량을 포함한 실적함 자료를 학습하면 직접 회귀를 사용할 수 있습니다.'
         self.prediction_note.set(note);self.draw_chart()
     def report(self):

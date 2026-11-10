@@ -219,6 +219,16 @@ class ModelTests(unittest.TestCase):
             data.loc[0,'함유형']='?';data.loc[1,'함유형']=' '
             data.rename(columns=HEADERS).to_excel(p,index=False)
             self.assertEqual(len(read_excel(p)),118)
+    def test_expected_year_applies_to_series_and_both_totals(self):
+        bundle=train(self.df)
+        earlier=self.df.iloc[[0]][BASE].copy();earlier['취역연도']=2030
+        later=earlier.copy();later['취역연도']=2040
+        first=predict(earlier,bundle).iloc[0];second=predict(later,bundle).iloc[0]
+        for name,m in bundle['models'].items():
+            ratio=np.exp(m['coef'][1+m['terms'].index('year')]) if 'year' in m['terms'] else 1
+            self.assertAlmostEqual(second[name+'_예측_tonne']/first[name+'_예측_tonne'],ratio)
+        self.assertAlmostEqual(second['총중량_SWBS합계_tonne'],sum(second[c+'_예측_tonne'] for c in WEIGHTS))
+        self.assertIn('총중량_독립회귀_예측_tonne',second)
     def test_insufficient(self):
         with self.assertRaisesRegex(ValueError,'부족'): train(self.df.iloc[:3])
 

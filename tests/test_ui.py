@@ -71,6 +71,15 @@ class UITests(unittest.TestCase):
                 self.assertNotIn('순항속력',app.inputs)
                 self.assertIn('Wtotal',app.guide_text.get('1.0','end'))
                 self.assertIn('C :',app.guide_text.get('1.0','end'))
+                app.inputs['취역연도'].set('2035')
+                app.estimate();root.update()
+                self.assertEqual(app.data.iloc[0]['취역연도'],2035)
+                self.assertIn('2035',app.prediction_note.get())
+                self.assertIn('입력 취역 예상연도',app.prediction_note.get())
+                from model import predict
+                output_row=predict(app.data,app.bundle).iloc[0]
+                self.assertEqual(app.sum_value.get(),f"{output_row['총중량_SWBS합계_tonne']:,.2f} tonne")
+                self.assertEqual(app.total_value.get(),f"{output_row['총중량_독립회귀_예측_tonne']:,.2f} tonne")
                 # Screenshot uses synthetic test data only, prominently identified.
                 app.status.set('DEMONSTRATION  |  SYNTHETIC TEST DATA / 실제 함정 데이터가 아닙니다.')
                 app.notebook.select(app.design_tab);root.update()
