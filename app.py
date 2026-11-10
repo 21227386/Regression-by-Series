@@ -57,7 +57,7 @@ class App:
 
     def header(self):
         h = tk.Frame(self.root, bg=NAVY, height=146); h.pack(fill='x'); h.pack_propagate(False)
-        words = tk.Frame(h, bg=NAVY); words.pack(side='left', padx=28, pady=20)
+        words = tk.Frame(h, bg=NAVY); words.pack(side='left', padx=28, pady=10)
         self.label(words, 'NAVAL SHIP DESIGN  /  ENGINEERING ANALYTICS', 10, GOLD, NAVY, True, True).pack(anchor='w')
         self.label(words, 'Naval Ship Weight Estimator', 28, WHITE, NAVY, True, True).pack(anchor='w', pady=(8, 0))
         self.label(words, '(Total & Series)', 18, '#a9d6da', NAVY, False, True).pack(anchor='w')
