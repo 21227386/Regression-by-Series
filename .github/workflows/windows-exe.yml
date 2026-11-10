@@ -22,7 +22,7 @@ jobs:
           UI_SCREENSHOT: gui-preview.png
       - name: Check desktop UI initializes
         run: python -c "import tkinter as tk; from app import App; r=tk.Tk(); App(r); r.update(); r.destroy()"
-      - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SWBS_Regression app.py
+      - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SWBS_Regression --add-data "assets;assets" app.py
       - name: Check executable starts
         shell: pwsh
         run: |

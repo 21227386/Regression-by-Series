@@ -9,7 +9,7 @@ Windows 데스크톱 프로그램. 중량은 tonne, 치수는 m, 추진출력은
 3. **Input File Upload**: 전체 실적함 엑셀을 업로드하면 자동으로 계수를 학습합니다. 회귀 탭에 K, 각 회귀지수, 함종별 Dt, 기준연도, 별도의 보정계수 C, 학습 적합도를 표시합니다.
 4. **Design & Weight Estimation** 탭에서 신규 함정의 함종·취역연도·길이·폭·깊이·소요마력·전력·속력을 입력하고 **Estimate Ship Weight**를 누릅니다.
 5. 계열 합계, 총중량 직접 회귀값, SWBS별 중량과 분포 그래프를 확인합니다. **Export Results to Excel**로 저장합니다.
-6. **③ Model Library → Save Regression Model / Load Regression Model**로 엑셀(.xlsx) 모델을 저장·불러옵니다. 기본 파일명은 Regression Model.xlsx입니다. 신규 설계함은 화면에서 직접 입력합니다. Batch Design File Upload는 삭제되었습니다.
+6. **② Regression → Save Regression Model**로 엑셀(.xlsx) 모델을 저장합니다. 기본 파일명은 Regression Model.xlsx입니다. 신규 설계함은 화면에서 직접 입력합니다. Batch Design File Upload는 삭제되었습니다.
 
 추가 실적함이 생기면 기존 자료와 합친 전체 엑셀을 다시 업로드하세요. 신규 자료만 자동 누적하는 방식은 아닙니다. 학습·예측에 실패하면 기존 모델과 데이터는 유지됩니다.
 
@@ -102,8 +102,14 @@ View All Results를 누르면 다음을 확인합니다.
 
 사이드바는 1 / Reference Fleet, 2 / Regression, 3 / Weight Estimation, 4 / Reports입니다. Save Regression Model과 Load Regression Model은 2 / Regression에 포함됩니다.
 
-Regression의 **Equations & Coefficient Guide** 버튼 또는 **Equations & Guide** 탭에는 SWBS100~700 식, 계열합계와 총중량 직접 회귀식, K·α·β·γ·Dt·C의 정의, 변수 단위, 연도 보정, 계수 표와 함정별 진단표의 관계 및 학습 적합도 해석이 들어 있습니다.
+Regression의 **Graphs 옆 Equations & Guide** 탭에는 SWBS100~700 식, 계열합계와 총중량 직접 회귀식, K·α·β·γ·Dt·C의 정의, 변수 단위, 연도 보정, 계수 표와 함정별 진단표의 관계 및 학습 적합도 해석이 들어 있습니다.
 
 Weight Estimation에서 함종·길이·폭·깊이·소요마력·소요전력의 6개 필수 항목으로 예측할 수 있습니다. 취역연도는 선택 항목이며 생략하면 학습 평균 취역연도를 적용합니다(F(Y)=1). 입력 시 연도 보정을 적용합니다. 적용 연도와 입력/기본값 여부는 결과 화면과 엑셀에 남습니다. 순항속력은 현재 식에 사용하지 않으므로 신규 설계 화면에서 제거했으며 실적함 입력 양식에는 유지합니다.
 
 Weight Estimation의 Expected Year / 취역 예상연도(year)에 연도를 입력하면 연도 항이 있는 SWBS200·300·400·500·700 및 총중량 직접 회귀에 해당 연도를 적용합니다. SWBS100·600은 원래 식에 연도 항이 없습니다. 결과 카드에는 SWBS100~700 예측값의 합계와 전체 경하중량 직접 회귀값을 동시에 표시합니다. 생략 시 학습 평균연도를 적용하며 적용 연도를 결과에 기록합니다.
+
+## 수식 이미지 가이드
+
+Equations & Guide는 Graphs 바로 옆에 있습니다. SWBS100~700, 합산 총중량, 전체 경하중량 직접 회귀, 연도 및 역변환 보정식을 PNG 수식 이미지로 보여주며 각 이미지 오른쪽에 변수·계수의 의미를 설명합니다. 세로 스크롤로 전체 식과 표 해설을 확인할 수 있습니다. Equations & Coefficient Guide 및 Load Regression Model 버튼과 Model & Workflow 설명은 제거했습니다. Save Regression Model 버튼은 유지합니다.
+
+수식 이미지는 `assets/equations`에 포함되어 있으며 EXE에도 함께 패키징됩니다. 실행 PC에 수식 렌더러나 인터넷 연결은 필요하지 않습니다. 이미지를 다시 생성할 때만 개발 환경에 matplotlib==3.10.8을 설치하고 `python tools/render_equations.py`를 실행합니다.

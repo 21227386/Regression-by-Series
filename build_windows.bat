@@ -7,7 +7,7 @@ if errorlevel 1 goto fail
 if errorlevel 1 goto fail
 .venv-win\Scripts\python.exe -m unittest discover -s tests -v
 if errorlevel 1 goto fail
-.venv-win\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name SWBS_Regression app.py
+.venv-win\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name SWBS_Regression --add-data "assets;assets" app.py
 if errorlevel 1 goto fail
 echo Built: dist\SWBS_Regression.exe
 pause

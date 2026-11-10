@@ -69,8 +69,16 @@ class UITests(unittest.TestCase):
                 self.assertAlmostEqual(app.data.iloc[0]['취역연도'],app.bundle['models']['SWBS100']['mean_year'])
                 self.assertEqual(app.data.iloc[0]['연도 적용'],'학습 평균연도')
                 self.assertNotIn('순항속력',app.inputs)
-                self.assertIn('Wtotal',app.guide_text.get('1.0','end'))
-                self.assertIn('C :',app.guide_text.get('1.0','end'))
+                self.assertEqual(len(app.equation_images),11)
+                self.assertEqual(app.reg_tabs.tab(1,'text'),'Equations & Guide')
+                self.assertTrue(all(image.width()>400 for image in app.equation_images))
+                def descendants(widget):
+                    for child in widget.winfo_children():
+                        yield child
+                        yield from descendants(child)
+                button_texts=[w.cget('text') for w in descendants(root) if isinstance(w,tk.Button)]
+                self.assertNotIn('Load Regression Model',button_texts)
+                self.assertNotIn('Equations & Coefficient Guide',button_texts)
                 app.inputs['취역연도'].set('2035')
                 app.estimate();root.update()
                 self.assertEqual(app.data.iloc[0]['취역연도'],2035)

@@ -4,6 +4,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import pandas as pd
+from equation_guide import GUIDE_ROWS, TABLE_EXPLANATION
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
                    coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, diagnostic_rows, diagnostic_metrics)
 
@@ -93,9 +94,7 @@ class App:
         self.label(inner, '2  /  Regression', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'View All Results', self.open_regression).pack(fill='x', pady=3)
         self.button(inner, 'View Ship Types Results', self.open_ship_types).pack(fill='x', pady=3)
-        self.button(inner, 'Equations & Coefficient Guide', self.open_guide).pack(fill='x', pady=3)
         self.button(inner, 'Save Regression Model', self.save).pack(fill='x', pady=3)
-        self.button(inner, 'Load Regression Model', self.load).pack(fill='x', pady=3)
         self.label(inner, '3  /  Weight Estimation', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'Open Weight Estimation', self.open_estimation, True).pack(fill='x', pady=3)
         self.label(inner, '4  /  Reports', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
@@ -196,7 +195,7 @@ class App:
         overview=tk.Frame(tabs,bg=WHITE);coefs=tk.Frame(tabs,bg=WHITE);ships=tk.Frame(tabs,bg=WHITE)
         stats=tk.Frame(tabs,bg=WHITE);notes=tk.Frame(tabs,bg=WHITE)
         for frame,title in [(overview,'Graphs'),(coefs,'Coefficients'),(ships,'Ship Diagnostics'),(stats,'Fit Statistics'),(notes,'Notes')]:tabs.add(frame,text=title)
-        self.guide_tab=tk.Frame(tabs,bg=WHITE);tabs.add(self.guide_tab,text='Equations & Guide')
+        self.guide_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(1,self.guide_tab,text='Equations & Guide')
         self.build_guide(self.guide_tab)
         self.reg_graph=tk.Canvas(overview,bg='#f3f7fa',height=320,highlightthickness=0)
         # Pack the graph after its information footer so hover details remain visible.
@@ -219,52 +218,42 @@ class App:
         self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계함·초계정의 호위함 통합 후 척수가 가장 많은 함종입니다.\n동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
 
     def build_guide(self,parent):
-        text=tk.Text(parent,wrap='word',font=(KO,11),bg='#f3f7fa',fg=INK,relief='flat',padx=20,pady=16)
-        sy=ttk.Scrollbar(parent,orient='vertical',command=text.yview);text.configure(yscrollcommand=sy.set)
-        sy.pack(side='right',fill='y');text.pack(fill='both',expand=True)
-        text.tag_configure('title',font=(EN,18,'bold'),foreground=TEAL,spacing1=10,spacing3=10)
-        text.tag_configure('equation',font=(EN,14,'bold'),foreground=INK,spacing1=5,spacing3=10)
-        def put(value,tag=None):text.insert('end',value+'\n',tag)
-        put('Regression Equations & Coefficient Guide','title')
-        put('계열별 회귀식 — 모든 중량의 단위는 tonne입니다.')
-        for equation in [
-            'W100 = K (LBD)^α Dt C',
-            'W200 = K P^α Dt F(Y) C',
-            'W300 = K PE^α L^β Dt F(Y) C',
-            'W400 = K Dt F(Y) C',
-            'W500 = K (LBD)^α PE^β Dt F(Y) C',
-            'W600 = K (LB)^α Dt C',
-            'W700 = K Dt F(Y) C']:
-            put(equation,'equation')
-        put('Total / 경하중량','title')
-        put('Wsum = W100 + W200 + W300 + W400 + W500 + W600 + W700','equation')
-        put('Wtotal = K (LBD)^α P^β Dt F(Y) C','equation')
-        put('Wsum은 계열별 예측 합계이고, Wtotal은 실제 경하중량을 학습한 별도 직접 회귀값입니다. 두 값은 일치하도록 강제하지 않습니다. SWBS 합계의 포함 범위가 경하중량과 같은지 확인하세요.')
-        put('Year Adjustment / 취역연도 보정','title')
-        put('F(Y) = exp[γ (Y − Ȳ) / 10]','equation')
-        put('Y: 실적함의 취역연도 또는 신규 함정의 취역 예상연도, Ȳ: 해당 모형의 학습 평균 취역연도. 연도 입력을 생략하면 학습 평균연도에서 예측하며 F(Y)=1입니다. 취역 예상연도 입력란에 미래 연도를 넣으면 200·300·400·500·700계열과 총중량 직접 회귀에 학습된 γ를 적용합니다. 100·600계열은 원래 식에 연도 항이 없습니다.')
-        put('Definitions / 변수·계수의 의미','title')
-        for line in [
-            'K : 계열별 기본 중량계수. 총중량 직접 회귀에도 별도 K가 있습니다.',
-            'α, β : 설계변수의 회귀지수. 변수의 증가에 대한 중량 변화의 크기를 나타냅니다.',
-            'γ : 취역연도 영향계수. 연도가 10년 증가할 때 연도 효과는 exp(γ)배입니다.',
-            'Dt : 함종별 설계계수. 각 계열 및 총중량 모형마다 별도로 추정하는 상대 배율입니다.',
-            'C : 역변환 편향 보정계수. 로그 잔차 e의 exp(e) 평균이며 K와 분리하여 적용합니다.',
-            'L, B, D : 길이·폭·깊이(m). P : 소요마력(hp). PE : 소요전력(kW).',
-            '함유형·순번은 기록과 추적에 사용합니다. 순항속력은 현재 회귀식에 사용하지 않습니다.']:
-            put(line)
-        put('Reading the Coefficients Table / 표 읽는 방법','title')
-        put('같은 계열에서는 K·회귀지수·C·기준연도가 공통이고 Dt가 함종마다 다릅니다. 그래서 Coefficients 표에는 공통 계수가 여러 행에 반복됩니다.')
-        put('기준함종은 오류 행을 제외하고 초계함·초계정을 호위함으로 통합한 뒤 척수가 가장 많은 함종이며 Dt=1입니다. 동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.')
-        put('예: SWBS100에서 구축함 Dt=1.25이면 L·B·D가 같을 때 기준함종보다 선체구조 중량을 25% 크게 추정합니다. 실제 함정 크기가 다르면 이 배율만으로 총중량을 비교할 수 없습니다.')
-        put('SWBS200의 Dt는 추진계통용이고, 총중량 모형의 Dt는 경하중량용입니다. Ship Diagnostics의 Dt는 선택한 모형에서 그 함정에 적용한 같은 값입니다. 척별 독립 Dt를 추가로 추정하지 않습니다.')
-        put('Diagnostics / 적합도와 함정별 오차','title')
-        put('잔차 = 실제−예측 / 오차율 = (예측−실제)/실제 × 100. R²·RMSE·MAPE와 그래프는 학습자료 적합도이며 새로운 함급에 대한 검증 성능이 아닙니다.')
-        put('함종별 보기는 전체 모형의 계수로 선택 함종의 적합도를 계산합니다. 해당 함종만 별도 재학습하지 않습니다. 계수 수와 조건수는 전체 모형의 값입니다.')
-        put('Ship Diagnostics는 절대 오차율이 큰 순서입니다. 그래프의 순번과 연계하여 차이가 큰 함정을 확인하세요.')
-        put('Model & Workflow / 사용 순서','title')
-        put('1 Reference Fleet: 전체 실적함 엑셀 업로드 → 2 Regression: 회귀 결과·수식 확인, 엑셀 모델 저장/불러오기 → 3 Weight Estimation: 신규 함정의 제원 입력 및 중량 예측 → 4 Reports: 결과 엑셀 저장.')
-        text.configure(state='disabled');self.guide_text=text
+        canvas=tk.Canvas(parent,bg='#edf2f5',highlightthickness=0)
+        scrollbar=ttk.Scrollbar(parent,orient='vertical',command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right',fill='y');canvas.pack(fill='both',expand=True)
+        content=tk.Frame(canvas,bg='#edf2f5',padx=12,pady=12)
+        window=canvas.create_window((0,0),window=content,anchor='nw')
+        content.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',lambda e:canvas.itemconfigure(window,width=e.width))
+        self.label(content,'Regression Equations & Coefficients',20,TEAL,'#edf2f5',True,True).pack(anchor='w',pady=(0,6))
+        tk.Label(content,text='왼쪽은 수식 이미지, 오른쪽은 해당 변수와 계수의 의미입니다. 모든 중량은 tonne입니다.',
+                 font=(KO,10),fg=MUTED,bg='#edf2f5',anchor='w').pack(fill='x',pady=(0,12))
+        self.equation_images=[];self.equation_description_labels=[]
+        assets=Path(__file__).resolve().parent/'assets'/'equations'
+        for key,title,equation,description in GUIDE_ROWS:
+            card=tk.Frame(content,bg=WHITE,highlightbackground='#d0dfe7',highlightthickness=1,padx=12,pady=10)
+            card.pack(fill='x',pady=(0,10));card.columnconfigure(1,weight=1)
+            self.label(card,title,13,TEAL,WHITE,True,True).grid(row=0,column=0,columnspan=2,sticky='w',pady=(0,7))
+            photo=tk.PhotoImage(file=str(assets/(key+'.png'))).subsample(2)
+            self.equation_images.append(photo)
+            tk.Label(card,image=photo,bg=WHITE,anchor='w').grid(row=1,column=0,sticky='nw',padx=(0,12))
+            note=tk.Label(card,text=description,font=(KO,10),fg=INK,bg=WHITE,justify='left',anchor='nw',wraplength=340)
+            note.grid(row=1,column=1,sticky='nw')
+            self.equation_description_labels.append(note)
+            card.bind('<Configure>',lambda e,label=note:label.configure(wraplength=max(180,e.width-555)))
+        for title,description in TABLE_EXPLANATION:
+            card=tk.Frame(content,bg=WHITE,padx=14,pady=12);card.pack(fill='x',pady=(0,10))
+            self.label(card,title,12,TEAL,WHITE,True).pack(anchor='w',pady=(0,5))
+            note=tk.Label(card,text=description,font=(KO,10),fg=INK,bg=WHITE,justify='left',anchor='w',wraplength=900)
+            note.pack(fill='x');card.bind('<Configure>',lambda e,label=note:label.configure(wraplength=max(200,e.width-32)))
+        def scroll(event):
+            if self.notebook.select()==str(self.model_tab) and self.reg_tabs.select()==str(self.guide_tab):
+                steps=(-1 if getattr(event,'num',None)==4 else 1) if getattr(event,'num',None) in (4,5) else (-1 if event.delta>0 else 1)
+                canvas.yview_scroll(steps*3,'units');return 'break'
+        self.root.bind_all('<MouseWheel>',scroll,add='+')
+        self.root.bind_all('<Button-4>',scroll,add='+');self.root.bind_all('<Button-5>',scroll,add='+')
+        self.guide_canvas=canvas
 
     def selected_type(self):
         choice=self.ship_filter.get()
