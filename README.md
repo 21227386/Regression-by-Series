@@ -1,14 +1,19 @@
-# 함정 SWBS 중량 회귀분석
+# Naval Ship Weight Estimator(Total & Series)
 
 Windows 데스크톱 프로그램. 중량은 tonne, 치수는 m, 추진출력은 hp, 전력은 kW, 속력은 kn입니다.
 
 ## 사용
 
-1. `SWBS_Regression.exe` 실행 후 **입력 양식 저장**.
-2. Excel의 첫 시트에 1척당 1행 입력. 학습에는 7개 SWBS 중량이 모두 필요합니다. 총중량은 선택 열입니다. 신규 예측에는 기본 입력 8개 열만 필요합니다. 양식의 빈 SWBS/총중량 열은 신규 예측에서 무시합니다.
-3. **엑셀 학습** → 적합도 확인 → **모델 저장**(JSON).
-4. **신규 함정 예측** → 신규 함정 Excel 선택 → **결과 엑셀 저장**.
-5. 다음 실행에서는 JSON 모델을 불러오면 다시 학습할 필요가 없습니다.
+1. **Download Input File Template**: 단위·함종 목록·안내가 포함된 엑셀 양식을 저장합니다.
+2. 첫 시트에 실적함 1척당 1행으로 제원과 실제 SWBS 중량을 입력합니다. 총중량은 경하중량이며 선택 입력입니다.
+3. **Input File Upload**: 전체 실적함 엑셀을 업로드하면 자동으로 계수를 학습합니다. 회귀 탭에 K, 각 회귀지수, 함종별 Dt, 기준연도, 별도의 보정계수 C, 학습 적합도를 표시합니다.
+4. **Design & Weight Estimation** 탭에서 신규 함정의 함종·취역연도·길이·폭·깊이·소요마력·전력·속력을 입력하고 **Estimate Ship Weight**를 누릅니다.
+5. 계열 합계, 총중량 직접 회귀값, SWBS별 중량과 분포 그래프를 확인합니다. **Export Results to Excel**로 저장합니다.
+6. **Save Regression Model / Load Regression Model**로 JSON 모델을 재사용합니다. **Batch Design File Upload**는 기본 제원 8개 열의 신규 설계 엑셀을 일괄 예측합니다. 화면에는 첫 함정, 결과 엑셀에는 전체 함정이 표시됩니다.
+
+추가 실적함이 생기면 기존 자료와 합친 전체 엑셀을 다시 업로드하세요. 신규 자료만 자동 누적하는 방식은 아닙니다. 학습·예측에 실패하면 기존 모델과 데이터는 유지됩니다.
+
+Windows UI: 남색·청록색, 함정 벡터 도해, 입체 버튼, 영문 Times New Roman, 한글 맑은 고딕(시스템 대체 폰트 가능). 하단에 Copyright by Naval Ship Design Technology Division을 표시합니다.
 
 학습자료와 예측자료 파일은 자동 덮어쓰기하지 않습니다. 결과 저장 시 별도 파일명을 사용하세요. Excel 수식 셀은 Excel에서 계산하고 저장한 값이 필요합니다. 데이터는 첫 시트에서만 읽습니다.
 

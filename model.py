@@ -51,7 +51,10 @@ def read_excel(path, training=True):
     df = normalize_types(df)
     numeric = BASE[1:] + (WEIGHTS if training else [])
     if training and '총중량' in df:
-        numeric += ['총중량']
+        if df['총중량'].isna().all():
+            df = df.drop(columns=['총중량'])
+        else:
+            numeric += ['총중량']
     for c in numeric:
         df[c] = pd.to_numeric(df[c], errors='coerce')
         bad = ~np.isfinite(df[c])
@@ -164,3 +167,41 @@ def template(path):
                       '적용 함종': SHIP_TYPES + ['호위함', '호위함']}).to_excel(writer, sheet_name='함종 안내', index=False)
         pd.DataFrame({'열': BASE + WEIGHTS + ['총중량'],
                       '단위': ['문자','년','m','m','m','hp','kW','kn'] + ['tonne'] * 8}).to_excel(writer, sheet_name='단위', index=False)
+
+    # Format the workbook without adding fabricated reference-ship values.
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.comments import Comment
+    from openpyxl.worksheet.datavalidation import DataValidation
+    wb = load_workbook(path)
+    ws = wb['데이터']; ws.freeze_panes = 'A2'
+    ws.auto_filter.ref = ws.dimensions
+    units = ['함종', '년', 'm', 'm', 'm', 'hp', 'kW', 'kn'] + ['tonne'] * 8
+    for cell, unit in zip(ws[1], units):
+        cell.comment = Comment('단위: ' + unit + (' / 선택: 경하중량' if cell.value == '총중량' else ''), 'Naval Ship Design')
+    validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPES + ['초계함','초계정']) + '"')
+    validation.errorTitle = '함종 확인'; validation.error = '목록에서 함종을 선택하세요.'
+    validation.showErrorMessage = True; ws.add_data_validation(validation); validation.add('A2:A10000')
+    guide = wb.create_sheet('사용 안내')
+    for text in ['Naval Ship Weight Estimator(Total & Series)',
+                 '첫 번째 데이터 시트에 실적함 1척당 1행으로 입력하세요.',
+                 '기존 자료와 추가 자료를 합친 전체 파일을 업로드하면 계수를 다시 추정합니다.',
+                 'SWBS100~700: 각 계열 총중량(tonne), 총중량: 실제 경하중량(tonne).',
+                 '총중량은 선택 입력입니다. 전부 비우면 계열 합계만 예측합니다. 일부 행만 비우는 것은 허용하지 않습니다.',
+                 '길이/폭/깊이 m, 소요마력 hp, 소요전력 kW, 순항속력 kn.',
+                 '속력은 기록용이며 현재 회귀식에는 사용하지 않습니다.',
+                 '0 또는 결측 SWBS 중량은 학습할 수 없습니다.',
+                 '초계함·초계정은 호위함과 통합 학습합니다.',
+                 '신규 함정은 GUI에서 직접 입력하거나 기본 제원 8개 열의 엑셀을 일괄 업로드하세요.']:
+        guide.append([text])
+    for sheet in wb:
+        sheet.sheet_properties.tabColor = '087F87'
+        for cell in sheet[1]:
+            cell.fill = PatternFill('solid', fgColor='102638')
+            cell.font = Font(name='Times New Roman', color='FFFFFF', bold=True, size=12)
+            cell.alignment = Alignment(vertical='center')
+        sheet.row_dimensions[1].height = 30
+        for col in sheet.columns:
+            sheet.column_dimensions[col[0].column_letter].width = 22
+    guide.column_dimensions['A'].width = 115
+    wb.save(path)

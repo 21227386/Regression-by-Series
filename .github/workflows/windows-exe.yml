@@ -13,8 +13,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements.txt pyinstaller==6.16.0
+      - run: python -m pip install -r requirements.txt pyinstaller==6.16.0 pillow==11.3.0
       - run: python -m unittest discover -s tests -v
+        env:
+          UI_SCREENSHOT: gui-preview.png
       - name: Check desktop UI initializes
         run: python -c "import tkinter as tk; from app import App; r=tk.Tk(); App(r); r.update(); r.destroy()"
       - run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SWBS_Regression app.py
@@ -35,4 +37,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="windows-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          gh release create "$tag" dist/SWBS_Regression.exe --target "$GITHUB_SHA" --title "SWBS Regression Windows build ${GITHUB_RUN_NUMBER}" --notes "Windows x64 executable. Units: tonne, m, hp, kW, kn. Cruising speed is retained as input but is not used in the supplied regression equations."
+          gh release create "$tag" dist/SWBS_Regression.exe gui-preview.png --target "$GITHUB_SHA" --title "Naval Ship Weight Estimator Windows build ${GITHUB_RUN_NUMBER}" --notes "Windows x64 executable. Units: tonne, m, hp, kW, kn. Cruising speed is retained as input but is not used in the supplied regression equations."
