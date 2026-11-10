@@ -180,7 +180,8 @@ def predict_one(df, model):
     with np.errstate(over='raise', invalid='raise'):
         return np.exp(x @ np.asarray(coef)) * model['smearing']
 
-def train(df):
+def train(df, validation_mode='ship'):
+    from year_search import select_year_scale
     df = normalize_types(df)
     if '총중량' in df:
         if 'SWBS700' not in df:raise ValueError('총 경하중량에서 공제할 실적 SWBS700 중량이 필요합니다.')
@@ -200,6 +201,10 @@ def train(df):
             models[TOTAL_MODEL] = fit_one(df, TOTAL_TARGET, ['LBD', 'P'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
+    models={name:select_year_scale(df,m,validation_mode) for name,m in models.items()}
+    for name,m in models.items():
+        selected=m.get('selection',{})
+        if m['year_by_type'] and selected.get('status')!='검증 선택':warnings.append(f"{name}: {selected.get('status')} / 검증 {selected.get('validation_n',0)}/{len(df)}척. {selected.get('reason','')}")
     return {'version': 3, 'mode':'ship_type_year_exclude_700', 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
 
 def predict(df, bundle):
@@ -231,12 +236,13 @@ def coefficients(bundle):
                   }[t] for t in terms] + ['Dt'] + (['exp[γt(Y−함종평균연도)/10]'] if m['year_by_type'] else []) + ['C'])}
         row.update({t + '_회귀계수': float(v) for t, v in zip(terms, b[1:p])})
         for j, cls in enumerate(m['classes']):
-            rows.append({**row, '함종': cls, '학습척수': m.get('class_counts', {}).get(cls), 'γt':m['gamma'].get(cls), '함종평균연도':m['mean_years'][cls], 'Dt': 1.0 if j == 0 else float(np.exp(b[p+j-1]))})
+            rows.append({**row, '함종': cls, '학습척수': m.get('class_counts', {}).get(cls), 'γt':m['gamma'].get(cls), '함종평균연도':m['mean_years'][cls], '선택연도효과(%)':None if m.get('year_scale') is None else m['year_scale']*100, '기본γt':m.get('gamma_base',{}).get(cls), 'Dt': 1.0 if j == 0 else float(np.exp(b[p+j-1]))})
     return pd.DataFrame(rows)
 
 def export(path, df, bundle):
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
         predict(df, bundle).to_excel(writer, sheet_name='예측결과', index=False)
+        write_search_sheets(writer,bundle)
         coefficients(bundle).to_excel(writer, sheet_name='회귀계수', index=False)
         diagnostic_data = [{'계열': name, **r} for name, m in bundle['models'].items() for r in m.get('diagnostics', [])]
         if diagnostic_data: pd.DataFrame(diagnostic_data).to_excel(writer, sheet_name='함정별 회귀진단', index=False)
@@ -306,19 +312,20 @@ def save_model_excel(path, bundle):
     for name, m in bundle['models'].items():
         nterms = len(m['terms'])
         parameters.append({'Target': name, 'K': float(np.exp(m['coef'][0])), 'C': m['smearing'],
-                           'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'],
+                           'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'], 'YearScale':m.get('year_scale'),
                            'ReferenceType': m['classes'][0], 'N': m['n'], 'Parameters': m['parameters'],
                            'RMSE_tonne': m['rmse_tonne'], 'MAPE_percent': m['mape_percent'],
                            'R2': m['r2'], 'ConditionNumber': m['condition_number'],
                            **{t: float(v) for t, v in zip(m['terms'], m['coef'][1:1+nterms])}})
         for j, c in enumerate(m['classes']):
-            types.append({'Target': name, 'ShipType': c, 'MeanYear':m['mean_years'][c], 'Gamma':m['gamma'].get(c,0.0), 'Count': m.get('class_counts', {}).get(c),
+            types.append({'Target': name, 'ShipType': c, 'MeanYear':m['mean_years'][c], 'Gamma':m['gamma'].get(c,0.0), 'BaseGamma':m.get('gamma_base',m['gamma']).get(c,0.0), 'Count': m.get('class_counts', {}).get(c),
                           'Dt': 1.0 if j==0 else float(np.exp(m['coef'][1+nterms+j-1]))})
         for c, bounds in m['ranges'].items():
             ranges.append({'Target': name, 'Variable': c, 'Min': bounds[0], 'Max': bounds[1]})
         diagnostics += [{'Target': name, **row} for row in m.get('diagnostics', [])]
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
         pd.DataFrame(parameters).to_excel(writer, sheet_name='Model Parameters', index=False)
+        write_search_sheets(writer,bundle)
         pd.DataFrame(types).to_excel(writer, sheet_name='Ship Types', index=False)
         pd.DataFrame(ranges).to_excel(writer, sheet_name='Ranges', index=False)
         coefficients(bundle).to_excel(writer, sheet_name='회귀계수 보기', index=False)
@@ -350,6 +357,9 @@ def load_model_excel(path):
             if len(meta)!=1 or meta.iloc[0]['Format']!='NSWE Ship Type Year Excl700 Model' or meta.iloc[0]['Version']!=1:
                 raise ValueError('지원하지 않는 모델 형식입니다.')
             params = pd.read_excel(book, sheet_name='Model Parameters')
+            search=pd.read_excel(book,sheet_name='Year Search').astype(object).where(lambda x:x.notna(),None) if 'Year Search' in book.sheet_names else pd.DataFrame()
+            selections=pd.read_excel(book,sheet_name='Year Selection').astype(object).where(lambda x:x.notna(),None) if 'Year Selection' in book.sheet_names else pd.DataFrame()
+            cv=pd.read_excel(book,sheet_name='Validation Predictions',dtype={'순번':str}).fillna('') if 'Validation Predictions' in book.sheet_names else pd.DataFrame()
             types = pd.read_excel(book, sheet_name='Ship Types')
             ranges = pd.read_excel(book, sheet_name='Ranges')
             diagnostics = pd.read_excel(book, sheet_name='Diagnostics', dtype={'순번': str})
@@ -395,7 +405,13 @@ def load_model_excel(path):
                 bounds[r['Variable']]=[lo,hi]
             if set(bounds)!=set(BASE[1:]):raise ValueError('학습 범위가 누락되었습니다.')
             counts={r['ShipType']: integer(r['Count'],'Count') for _,r in group.iterrows() if pd.notna(r['Count'])}
-            models[name]={'target': TOTAL_TARGET if name==TOTAL_MODEL else name,
+            scale=finite(row['YearScale'],'YearScale',True) if year_by_type and 'YearScale' in row and pd.notna(row['YearScale']) else (1.0 if year_by_type else None)
+            base_gamma={r['ShipType']:finite(r.get('BaseGamma',r['Gamma']),'BaseGamma') for _,r in group.iterrows()} if year_by_type else {}
+            models[name]={'year_scale':scale,'gamma_base':base_gamma,
+                          'year_search':search[search['Target']==name].drop(columns='Target').to_dict('records') if not search.empty else [],
+                          'selection':selections[selections['Target']==name].drop(columns='Target').to_dict('records')[0] if not selections.empty and name in set(selections['Target']) else {},
+                          'cv_predictions':cv[cv['Target']==name].drop(columns='Target').to_dict('records') if not cv.empty else [],
+                          'target': TOTAL_TARGET if name==TOTAL_MODEL else name,
                           'terms':terms, 'classes':classes, 'coef':coef, 'smearing':finite(row['C'],'C',True),
                           'mean_years':mean_years,'gamma':gamma,'year_by_type':year_by_type, 'ranges':bounds,
                           'n':integer(row['N'],'N'), 'parameters':integer(row['Parameters'],'Parameters'),
@@ -423,3 +439,12 @@ def diagnostic_metrics(rows):
     return {'n': len(rows), 'rmse_tonne': float(np.sqrt(np.mean((actual-predicted)**2))),
             'mape_percent': float(np.mean(np.abs((predicted-actual)/actual))*100),
             'r2': None if denominator==0 else float(1-((actual-predicted)**2).sum()/denominator)}
+
+
+def write_search_sheets(writer,bundle):
+    search=[{'Target':name,**r} for name,m in bundle['models'].items() for r in m.get('year_search',[])]
+    selections=[{'Target':name,'selected_percent':None if m.get('year_scale') is None else m['year_scale']*100,**m.get('selection',{})} for name,m in bundle['models'].items()]
+    cv=[{'Target':name,**r} for name,m in bundle['models'].items() for r in m.get('cv_predictions',[])]
+    pd.DataFrame(search).to_excel(writer,sheet_name='Year Search',index=False)
+    pd.DataFrame(selections).to_excel(writer,sheet_name='Year Selection',index=False)
+    pd.DataFrame(cv).to_excel(writer,sheet_name='Validation Predictions',index=False)

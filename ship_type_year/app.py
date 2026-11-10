@@ -90,6 +90,8 @@ class App:
         self.label(inner, '실적함 데이터 · 자동 회귀 학습', 10, '#d2e1e8', NAVY).pack(anchor='w', pady=(6,8))
         self.button(inner, 'Download Input File Template', self.make_template).pack(fill='x', pady=3)
         self.button(inner, 'Input File Upload', self.fit, True).pack(fill='x', pady=3)
+        self.validation_mode=tk.StringVar(value='함종 내 척별 검증')
+        ttk.Combobox(inner,textvariable=self.validation_mode,state='readonly',values=['함종 내 척별 검증','함급별 검증 (함급 열 필요)'],font=(KO,9)).pack(fill='x',pady=4)
         self.fleet_info = tk.StringVar(value='아직 학습된 모델이 없습니다.')
         tk.Label(inner, textvariable=self.fleet_info, wraplength=245, justify='left', bg=NAVY, fg='#b8cdd8', font=(KO,10)).pack(anchor='w', pady=5)
         self.label(inner, '2  /  Regression', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
@@ -198,6 +200,14 @@ class App:
         for frame,title in [(overview,'Graphs'),(coefs,'Coefficients'),(ships,'Ship Diagnostics'),(stats,'Fit Statistics'),(notes,'Notes')]:tabs.add(frame,text=title)
         self.guide_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(1,self.guide_tab,text='Equations & Guide')
         self.build_guide(self.guide_tab)
+        self.search_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(2,self.search_tab,text='Year Effect Search')
+        self.search_note=tk.StringVar(value='연도 효과 100%~10% 후보를 비교합니다.')
+        tk.Label(self.search_tab,textvariable=self.search_note,bg=WHITE,fg=INK,font=(KO,10),wraplength=930,justify='left',anchor='w').pack(fill='x',padx=10,pady=8)
+        self.search_graph=tk.Canvas(self.search_tab,bg='#f3f7fa',height=115,highlightthickness=0)
+        self.search_graph.pack(side='bottom',fill='x',padx=10,pady=5)
+        self.search_graph.bind('<Configure>',lambda e:self.draw_search_graph())
+        self.search_tree=self.scroll_table(self.search_tab,['Year %','Train MAPE','Train RMSE','CV MAPE','CV RMSE','CV Ships','Folds','Selected','Error'],[75,110,110,110,110,85,65,75,240])
+        self.search_tree.tag_configure('chosen',background='#d8eeeb')
         self.reg_graph=tk.Canvas(overview,bg='#f3f7fa',height=320,highlightthickness=0)
         # Pack the graph after its information footer so hover details remain visible.
         self.reg_graph.bind('<Configure>',lambda e:self.draw_regression_graphs())
@@ -207,12 +217,12 @@ class App:
         self.label(overview,'점의 순번으로 함정을 식별합니다. 마우스: 상세 정보 / 클릭: 진단표 이동. 적합도는 학습자료 기준입니다.',9,MUTED).pack(side='bottom',anchor='w',pady=3)
         self.label(overview,'왼쪽: 실제·예측 중량(tonne) / 오른쪽: 예측 중량 대비 오차율(%)',9,MUTED).pack(side='bottom',anchor='w',pady=3)
         self.reg_graph.pack(fill='both',expand=True,pady=8)
-        cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','γt','함종평균연도']
-        self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100])
+        cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','연도효과%','기본γt','적용γt','함종평균연도']
+        self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100,100,100])
         self.ship_diagnostics_tab=ships
         self.ship_tree=self.scroll_table(ships,['Ship No.','Excel Row','Ship Type','Subtype','Dt','F(Y)','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,80,90,100,85,95,120,120,120,100])
         self.ship_tree.tag_configure('large_error',foreground='#ae4437')
-        self.metric_tree=self.scroll_table(stats,['Target','Ships','RMSE (tonne)','MAPE (%)','R²','Parameters','Condition'],[180,65,135,100,100,90,120])
+        self.metric_tree=self.scroll_table(stats,['Target','Ships','Train RMSE (t)','Train MAPE (%)','Train R²','Parameters','Condition','Year %','CV MAPE','CV RMSE','CV N'],[180,65,135,100,100,90,120,90,100,110,80])
         self.log=tk.Text(notes,wrap='word',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
         sy=ttk.Scrollbar(notes,orient='vertical',command=self.log.yview);self.log.configure(yscrollcommand=sy.set)
         sy.pack(side='right',fill='y');self.log.pack(fill='both',expand=True)
@@ -271,7 +281,7 @@ class App:
         if not model:return
         rows=diagnostic_rows(model,cls);metric=diagnostic_metrics(rows)
         def fmt(v,places=3):return '—' if v is None else f'{v:,.{places}f}'
-        self.reg_stats.set(f"N {metric['n']}   R² {fmt(metric['r2'],4)}   RMSE {fmt(metric['rmse_tonne'],2)} t   MAPE {fmt(metric['mape_percent'],2)}%")
+        self.reg_stats.set(f"Train N {metric['n']}   R² {fmt(metric['r2'],4)}   RMSE {fmt(metric['rmse_tonne'],2)} t   MAPE {fmt(metric['mape_percent'],2)}%")
         self.ship_tree.delete(*self.ship_tree.get_children());self.ship_row_ids={}
         for d in sorted(rows,key=lambda r:abs(r['오차율(%)']),reverse=True):
             item=self.ship_tree.insert('','end',values=(d.get('순번',str(int(d['엑셀 행'])-1)),d['엑셀 행'],d['함종'],d.get('함유형',''),f"{d['Dt']:.5g}",f"{d.get('연도보정값',1):.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"),tags=('large_error',) if abs(d['오차율(%)'])>=20 else ())
@@ -279,16 +289,52 @@ class App:
         self.metric_tree.delete(*self.metric_tree.get_children());self.coeff_tree.delete(*self.coeff_tree.get_children())
         for name,x in self.bundle['models'].items():
             m=diagnostic_metrics(diagnostic_rows(x,cls))
-            self.metric_tree.insert('','end',values=(name,m['n'],fmt(m['rmse_tonne']),fmt(m['mape_percent']),fmt(m['r2'],4),x['parameters'],f"{x['condition_number']:.2f}"))
+            self.metric_tree.insert('','end',values=(name,m['n'],fmt(m['rmse_tonne']),fmt(m['mape_percent']),fmt(m['r2'],4),x['parameters'],f"{x['condition_number']:.2f}",'—' if x.get('year_scale') is None else f"{x['year_scale']*100:.0f}",fmt(x.get('selection',{}).get('validation_mape')),fmt(x.get('selection',{}).get('validation_rmse')),x.get('selection',{}).get('validation_n',0)))
             terms=dict(zip(x['terms'],x['coef'][1:1+len(x['terms'])]));offset=1+len(x['terms'])
             for j,ship_type in enumerate(x['classes']):
                 if cls is not None and ship_type!=cls:continue
                 values=[name,ship_type,x.get('class_counts',{}).get(ship_type,'—'),x['classes'][0],
                         f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
                 values += [f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE']]
-                self.coeff_tree.insert('','end',values=values+[f"{x['gamma'][ship_type]:.8g}" if x['year_by_type'] else '—', f"{x['mean_years'][ship_type]:.4f}"])
+                self.coeff_tree.insert('','end',values=values+[f"{x['year_scale']*100:.0f}" if x.get('year_scale') is not None else '—',f"{x.get('gamma_base',{}).get(ship_type,x['gamma'].get(ship_type,0)):.8g}" if x['year_by_type'] else '—',f"{x['gamma'][ship_type]:.8g}" if x['year_by_type'] else '—', f"{x['mean_years'][ship_type]:.4f}"])
         self.graph_hover.set('함정별 표는 절대 오차율이 큰 순서입니다. |오차율| 20% 이상은 붉은색으로 표시합니다.')
+        self.update_year_search()
         self.draw_regression_graphs()
+
+    def update_year_search(self):
+        self.search_tree.delete(*self.search_tree.get_children())
+        if not self.bundle:return
+        m=self.bundle['models'].get(self.reg_target.get(),{})
+        if not m.get('year_by_type'):
+            self.search_note.set('선택 계열은 연도 항이 없어 비율 탐색 대상이 아닙니다.');self.draw_search_graph();return
+        info=m.get('selection',{});q=m.get('year_scale',1)
+        basis='함급별' if info.get('basis')=='group' else '함종 내 척별'
+        self.search_note.set(f"선택 {q*100:.0f}% / {info.get('status','이전 모델')} / {basis} 검증 {info.get('validation_n',0)}/{m['n']}척.\n{info.get('reason') or ''} 후보 선택용 검증이며 최종 독립 시험 성능은 아닙니다. 함종 필터와 무관하게 계열 전체에서 비율을 선택합니다.")
+        def fmt(v):return '—' if v is None else f'{float(v):,.3f}'
+        for r in m.get('year_search',[]):
+            self.search_tree.insert('','end',values=(r['percent'],fmt(r.get('train_mape')),fmt(r.get('train_rmse')),fmt(r.get('validation_mape')),fmt(r.get('validation_rmse')),r.get('validation_n',0),r.get('folds',0),'YES' if r.get('selected') else '',r.get('error') or ''),tags=('chosen',) if r.get('selected') else ())
+        self.draw_search_graph()
+
+    def draw_search_graph(self):
+        c=self.search_graph;c.delete('all')
+        if not self.bundle:return
+        rows=self.bundle['models'].get(self.reg_target.get(),{}).get('year_search',[])
+        if not rows:return
+        w=max(c.winfo_width(),600);left,right,top,bottom=62,w-25,25,82
+        finite=[r[k] for r in rows for k in ['train_mape','validation_mape'] if r.get(k) is not None]
+        ceiling=max(finite+[1])*1.1
+        c.create_text(left,10,anchor='w',text='MAPE (%)  /  gray: training  teal: validation',font=(EN,10),fill=INK)
+        c.create_line(left,top,left,bottom,right,bottom,fill=MUTED)
+        c.create_text(left-7,top,anchor='e',text=f'{ceiling:.2g}',font=(EN,9),fill=MUTED)
+        c.create_text(left-7,bottom,anchor='e',text='0',font=(EN,9),fill=MUTED)
+        for key,color in [('train_mape','#8094a0'),('validation_mape',TEAL)]:
+            points=[]
+            for r in sorted(rows,key=lambda v:v['percent']):
+                x=left+(r['percent']-10)/90*(right-left)
+                if key=='train_mape':c.create_text(x,bottom+14,text=str(r['percent'])+'%',font=(EN,9),fill=MUTED)
+                if r.get(key) is None:continue
+                y=bottom-r[key]/ceiling*(bottom-top);points.extend([x,y]);c.create_oval(x-3,y-3,x+3,y+3,fill=color,outline='')
+            if len(points)>=4:c.create_line(*points,fill=color,width=2)
 
     def select_graph_ship(self, number, message):
         self.graph_hover.set(message)
@@ -369,11 +415,12 @@ class App:
     def fit(self):
         p=self.choose()
         if not p:return
-        self.busy=True; self.status.set('TRAINING  |  입력 검증 및 회귀계수 추정 중…')
+        validation='group' if self.validation_mode.get().startswith('함급') else 'ship'
+        self.busy=True; self.status.set('TRAINING  |  100%~10% 후보 재학습·교차검증 중…')
         state={}
         def worker():
             try:
-                data=read_excel(p); state['result']=(data,train(data))
+                data=read_excel(p); state['result']=(data,train(data,validation))
             except Exception as e:state['error']=str(e)
         thread=threading.Thread(target=worker,daemon=True);thread.start()
         def finish():
@@ -386,7 +433,8 @@ class App:
             skipped = self.data.attrs.get('excluded_rows', [])
             if skipped: messagebox.showinfo('입력 오류 함정 데이터 제외', f'{len(skipped)}척 제외, {len(self.data)}척으로 학습했습니다. 회귀 탭과 결과 엑셀의 제외 행 시트에서 확인하세요.')
             self.status.set('MODEL READY  |  계수 추정 완료. 신규 설계 제원을 입력하세요.')
-            self.notebook.select(self.model_tab)
+            self.reg_target.set('SWBS200');self.update_diagnostics()
+            self.notebook.select(self.model_tab);self.reg_tabs.select(self.search_tab)
         self.root.after(100,finish)
     def clear_prediction(self):
         self.sum_value.set('—'); self.total_value.set('—'); self.last_weights=None

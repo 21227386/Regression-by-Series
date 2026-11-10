@@ -77,6 +77,47 @@ class ModelTests(unittest.TestCase):
             self.assertIn('공제용',comment)
             self.assertIn('원래 경하중량',wb['데이터'].cell(1,len(headers)).comment.text)
             wb.close()
+    def test_scale_refits_other_coefficients_and_C(self):
+        from model import fit_one, predict_one
+        from year_search import refit_scale
+        df=fleet();base=fit_one(df,'SWBS200',TERMS[200]);half=refit_scale(df,base,.5)
+        for cls in base['classes']:self.assertAlmostEqual(half['gamma'][cls],base['gamma'][cls]*.5)
+        self.assertGreater(np.linalg.norm(np.array(base['coef'])-half['coef']),1e-7)
+        # Smearing is recomputed from the newly fitted residuals.
+        prediction=predict_one(df,half)/half['smearing']
+        residual=np.log(df['SWBS200'].to_numpy())-np.log(prediction)
+        self.assertAlmostEqual(half['smearing'],float(np.exp(residual).mean()))
+    def test_candidate_selection_and_fold_local_fitting(self):
+        from model import fit_one
+        from year_search import select_year_scale
+        from unittest.mock import patch
+        df=fleet();rng=np.random.default_rng(18)
+        df['SWBS200']*=np.exp(rng.normal(0,.22,len(df)))
+        base=fit_one(df,'SWBS200',TERMS[200]);seen=[]
+        original=fit_one
+        def capture(training,*args):
+            m=original(training,*args);seen.append((set(training.index),m));return m
+        with patch('model.fit_one',side_effect=capture):chosen=select_year_scale(df,base,'ship')
+        self.assertEqual(len(chosen['year_search']),10)
+        self.assertEqual([r['percent'] for r in chosen['year_search']],list(range(100,0,-10)))
+        self.assertEqual(chosen['selection']['validation_n'],100)
+        self.assertTrue(all(len(indices)<100 for indices,m in seen))
+        for indices,m in seen:self.assertEqual(m['mean_years'],df.loc[list(indices)].groupby('함분류')['취역연도'].mean().to_dict())
+        rows=chosen['year_search'];winner=min(rows,key=lambda r:(round(r['validation_mape'],8),round(r['validation_rmse'],8),-r['percent']))
+        self.assertEqual(chosen['year_scale'],winner['percent']/100)
+        self.assertEqual(len(chosen['cv_predictions']),100)
+        for r in chosen['cv_predictions']:self.assertNotIn(int(r['엑셀 행'])-2,seen[int(r['fold'])-1][0])
+    def test_group_integrity_and_unavailable_validation(self):
+        from model import fit_one
+        from year_search import select_year_scale,validation_splits
+        df=fleet();base=fit_one(df,'SWBS200',TERMS[200])
+        failed=select_year_scale(df,base,'group')
+        self.assertEqual(failed['year_scale'],1)
+        self.assertIn('검증 불가',failed['selection']['status'])
+        self.assertTrue(all(r['validation_mape'] is None for r in failed['year_search']))
+        df['함급']=[f'class-{i//10}' for i in range(100)]
+        splits,_=validation_splits(df,'group')
+        for tr,te in splits:self.assertFalse(set(df.iloc[tr]['함급']) & set(df.iloc[te]['함급']))
     def test_missing_year_variation_is_explicit(self):
         df=fleet();df.loc[df['함분류']=='호위함','취역연도']=2000
         with self.assertRaisesRegex(ValueError,'호위함'):train(df)
@@ -89,6 +130,8 @@ class ModelTests(unittest.TestCase):
                 self.assertEqual(m['mean_years'],loaded['models'][name]['mean_years'])
             self.assertEqual(loaded['models']['SWBS200']['diagnostics'][0]['순번'],'001')
             self.assertIn('γt',coefficients(b))
+            self.assertEqual(len(loaded['models']['SWBS200']['year_search']),10)
+            self.assertEqual(loaded['models']['SWBS200']['year_scale'],b['models']['SWBS200']['year_scale'])
     def test_patrol_pooling_and_input_exclusions(self):
         df=fleet();df.loc[df['함분류']=='호위함','함분류']='초계정'
         with tempfile.TemporaryDirectory() as tmp:

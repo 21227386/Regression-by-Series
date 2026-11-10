@@ -20,6 +20,8 @@ class UITests(unittest.TestCase):
                 deadline=time.monotonic()+30
                 while app.busy and time.monotonic()<deadline:root.update();time.sleep(.02)
                 self.assertFalse(app.busy);self.assertIsNotNone(app.bundle)
+                self.assertEqual(len(app.search_tree.get_children()),10)
+                self.assertEqual(app.bundle['models']['SWBS200']['selection']['basis'],'ship')
                 for c,var in app.inputs.items():var.set(str(df.iloc[0][c]))
                 app.inputs['함분류'].set('호위함');app.inputs['취역연도'].set('')
                 app.open_estimation();app.estimate();root.update()
@@ -42,4 +44,6 @@ class UITests(unittest.TestCase):
                     ImageGrab.grab(bbox=box).save('ship-type-year-preview.png')
                     app.open_guide();root.update();time.sleep(.3)
                     ImageGrab.grab(bbox=box).save('ship-type-year-equations.png')
+                    app.reg_target.set('SWBS200');app.update_diagnostics();app.reg_tabs.select(app.search_tab);root.update();time.sleep(.3)
+                    ImageGrab.grab(bbox=box).save('year-search-preview.png')
         finally:root.destroy()
