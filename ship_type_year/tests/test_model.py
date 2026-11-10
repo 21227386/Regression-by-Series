@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from model import TERMS, YEAR_TARGETS, WEIGHTS, design, train, predict, read_excel, save_model_excel, load_model_excel, coefficients
+from model import TERMS, YEAR_TARGETS, WEIGHTS, design, train, predict, read_excel, save_model_excel, load_model_excel, coefficients, TOTAL_MODEL, TOTAL_TARGET, TOTAL_SUM_COLUMN
 
 def fleet():
     rng=np.random.default_rng(67);n=100
@@ -18,7 +18,8 @@ def fleet():
         coef=[1.2]+[.6]*len(terms)+[.3]+([.12,-.2] if flag else [])
         df[f'SWBS{i}']=np.exp(x@np.array(coef))
     x=design(df,['LBD','P'],['구축함','호위함'],means,True)
-    df['총중량']=np.exp(x@np.array([1.4,.7,.1,.3,.08,-.11]))
+    df['SWBS700']=np.linspace(100,500,n)
+    df['총중량']=np.exp(x@np.array([1.4,.7,.1,.3,.08,-.11]))+df['SWBS700']
     return df
 
 class ModelTests(unittest.TestCase):
@@ -26,14 +27,14 @@ class ModelTests(unittest.TestCase):
         df=fleet();b=train(df)
         for name,m in b['models'].items():
             if m['year_by_type']:
-                expected=[.08,-.11] if name=='총중량_독립회귀' else [.12,-.2]
+                expected=[.08,-.11] if name==TOTAL_MODEL else [.12,-.2]
                 np.testing.assert_allclose(list(m['gamma'].values()),expected,atol=1e-10)
             self.assertEqual(m['mean_years'],df.groupby('함분류')['취역연도'].mean().to_dict())
             self.assertNotIn('mean_year',m)
         out=predict(df,b)
         for c in WEIGHTS:np.testing.assert_allclose(out[c+'_예측_tonne'],df[c],rtol=1e-9)
-        np.testing.assert_allclose(out['총중량_독립회귀_예측_tonne'],df['총중량'],rtol=1e-9)
-        np.testing.assert_allclose(out['총중량_SWBS합계_tonne'],out[[c+'_예측_tonne' for c in WEIGHTS]].sum(axis=1))
+        np.testing.assert_allclose(out[TOTAL_MODEL+'_예측_tonne'],df['총중량']-df['SWBS700'],rtol=1e-9)
+        np.testing.assert_allclose(out[TOTAL_SUM_COLUMN],out[[c+'_예측_tonne' for c in WEIGHTS]].sum(axis=1))
     def test_class_specific_ten_year_change_and_centering(self):
         df=fleet();b=train(df)
         for cls in ['구축함','호위함']:
@@ -48,6 +49,24 @@ class ModelTests(unittest.TestCase):
         for row in diagnostics:
             cls=row['함종'];m=b['models']['SWBS200']
             self.assertAlmostEqual(row['연도보정값'],np.exp(m['gamma'][cls]*(row['취역연도']-m['mean_years'][cls])/10))
+    def test_700_not_fitted_and_total_subtracted_exactly_once(self):
+        df=fleet();bundle=train(df);out=predict(df,bundle)
+        self.assertNotIn('SWBS700',bundle['models'])
+        self.assertNotIn('SWBS700_예측_tonne',out)
+        self.assertEqual(len(bundle['models']),7)
+        actual=np.array([r['실제중량'] for r in bundle['models'][TOTAL_MODEL]['diagnostics']])
+        np.testing.assert_allclose(actual,df['총중량']-df['SWBS700'])
+        changed=df.copy();changed['SWBS700']+=200;changed['총중량']+=200
+        # Net-weight targets are unchanged when full weight and actual 700 rise equally.
+        revised=train(changed)
+        np.testing.assert_allclose(bundle['models'][TOTAL_MODEL]['coef'],revised['models'][TOTAL_MODEL]['coef'],rtol=1e-10)
+        self.assertTrue(out['중량 범위'].eq('SWBS700 제외 중량').all())
+    def test_zero_700_and_nonpositive_net_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'zero.xlsx';df=fleet();df.loc[0,'SWBS700']=0;df.loc[1,'SWBS700']=df.loc[1,'총중량']
+            df.to_excel(p,index=False);valid=read_excel(p)
+            self.assertIn(0,valid.index);self.assertNotIn(1,valid.index)
+            self.assertEqual(valid.attrs['excluded_rows'][0]['엑셀 행'],3)
     def test_missing_year_variation_is_explicit(self):
         df=fleet();df.loc[df['함분류']=='호위함','취역연도']=2000
         with self.assertRaisesRegex(ValueError,'호위함'):train(df)

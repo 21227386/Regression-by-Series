@@ -5,15 +5,19 @@ import numpy as np
 import pandas as pd
 
 BASE = ['함분류', '취역연도', '길이', '폭', '깊이', '소요마력', '소요전력', '순항속력']
-WEIGHTS = [f'SWBS{i}' for i in range(100, 800, 100)]
-HEADERS = dict(zip(BASE + WEIGHTS + ['총중량'], ['함종', '취역연도(year)', '길이(m)', '폭(m)', '깊이(m)', '소요마력(hp)', '소요전력(kW)', '순항속력(kn)'] + [f'{c}(tonne)' for c in WEIGHTS] + ['총중량(tonne)']))
+WEIGHTS = [f'SWBS{i}' for i in range(100, 700, 100)]
+INPUT_WEIGHTS = WEIGHTS + ['SWBS700']
+TOTAL_TARGET = '경하중량_700제외'
+TOTAL_MODEL = '경하중량_700제외_독립회귀'
+TOTAL_SUM_COLUMN = '총중량_SWBS100_600합계_700제외_tonne'
+HEADERS = dict(zip(BASE + INPUT_WEIGHTS + ['총중량'], ['함종', '취역연도(year)', '길이(m)', '폭(m)', '깊이(m)', '소요마력(hp)', '소요전력(kW)', '순항속력(kn)'] + [f'{c}(tonne)' for c in WEIGHTS] + ['총중량(tonne)']))
 HEADERS['순번'] = '순번'
 HEADERS['함유형'] = '함유형'
-INPUT_COLUMNS = ['순번', '함분류', '함유형'] + BASE[1:] + WEIGHTS + ['총중량']
+INPUT_COLUMNS = ['순번', '함분류', '함유형'] + BASE[1:] + INPUT_WEIGHTS + ['총중량']
 # The supplied equations determine these terms; cruising speed is deliberately unused.
 TERMS = {100: ['LBD'], 200: ['P'], 300: ['PE', 'L'],
-         400: [], 500: ['LBD', 'PE'], 600: ['LB'], 700: []}
-YEAR_TARGETS = {'SWBS200','SWBS300','SWBS400','SWBS500','SWBS700','총중량'}
+         400: [], 500: ['LBD', 'PE'], 600: ['LB']}
+YEAR_TARGETS = {'SWBS200','SWBS300','SWBS400','SWBS500',TOTAL_TARGET}
 ALIASES = {'총 중량': '총중량', '충중량': '총중량', '취취역연도': '취역연도',
            '함정분류': '함분류', '함종': '함분류', '함정번호': '순번', '번호': '순번'}
 
@@ -36,7 +40,8 @@ def normalize_types(df):
     return out
 
 def validate_model_types(bundle):
-    if bundle.get('mode')!='ship_type_year':raise ValueError('함종별 연도 보정 전용 모델을 사용하세요. 원본 실적함으로 다시 학습하세요.')
+    if bundle.get('mode')!='ship_type_year_exclude_700':raise ValueError('함종별 연도 보정 전용 모델을 사용하세요. 원본 실적함으로 다시 학습하세요.')
+    if 'SWBS700' in bundle['models']:raise ValueError('700계열 포함 이전 모델은 사용할 수 없습니다. 다시 학습하세요.')
     for model in bundle['models'].values():
         if any(c not in SHIP_TYPES for c in model['classes']):
             raise ValueError('이전 모델의 함종 체계가 다릅니다. 새 프로그램에서 원본 엑셀로 다시 학습하세요.')
@@ -49,7 +54,7 @@ def read_excel(path, training=True):
         raise ValueError('중복된 열 이름이 있습니다.')
     serial_auto = '순번' not in df
     if serial_auto: df.insert(0, '순번', [str(i+1) for i in range(len(df))])
-    required = ['순번'] + BASE + (WEIGHTS + ['총중량'] if training else [])
+    required = ['순번'] + BASE + (INPUT_WEIGHTS + ['총중량'] if training else [])
     if '함유형' in df: required.append('함유형')
     missing = [c for c in required if c not in df]
     if missing:
@@ -88,11 +93,17 @@ def read_excel(path, training=True):
             if c == '취역연도':
                 bounds = (values < 1800) | (values > 2200) | (values % 1 != 0)
                 detail = ': 1800~2200의 정수 필요'
+            elif c == 'SWBS700':
+                bounds = values < 0
+                detail = ': 0 이상인 실적 중량 필요(공제용)'
             else:
                 bounds = values <= 0
                 detail = ': 0보다 큰 값 필요'
             for idx in df.index[~blank & ~invalid & bounds]: reasons[idx].append(HEADERS[c] + detail)
             df[c] = values
+    if training:
+        net = df['총중량'] - df['SWBS700']
+        for idx in df.index[np.isfinite(net) & (net<=0)]:reasons[idx].append('총중량−SWBS700은 0보다 커야 합니다.')
     excluded = [{'순번': str(df.at[idx, '순번']), '엑셀 행': int(idx) + 2,
                  '함종': '' if pd.isna(df.at[idx, '함분류']) else str(df.at[idx, '함분류']),
                  '제외 사유': '; '.join(items)} for idx, items in reasons.items() if items]
@@ -171,21 +182,25 @@ def predict_one(df, model):
 
 def train(df):
     df = normalize_types(df)
+    if '총중량' in df:
+        if 'SWBS700' not in df:raise ValueError('총 경하중량에서 공제할 실적 SWBS700 중량이 필요합니다.')
+        df[TOTAL_TARGET] = df['총중량'] - df['SWBS700']
+        if (df['SWBS700']<0).any() or (df[TOTAL_TARGET]<=0).any():raise ValueError('SWBS700은 0 이상이고, 총중량−SWBS700은 양수여야 합니다.')
     models = {f'SWBS{i}': fit_one(df, f'SWBS{i}', terms) for i, terms in TERMS.items()}
     excluded = df.attrs.get('excluded_rows', [])
     warnings = ([f'입력 {df.attrs.get("input_count", len(df))}척 중 빈 값 또는 오류가 있는 {len(excluded)}척 제외, {len(df)}척 학습. 제외 행: ' + ', '.join(str(r['엑셀 행']) for r in excluded)] if excluded else [])
     if df.attrs.get('serial_auto'):
         warnings.append('순번 없는 이전 양식: 원본 데이터 순서에 따라 1부터 식별번호를 자동 부여했습니다.')
     if '총중량' in df:
-        gap = np.abs(df['총중량'] - df[WEIGHTS].sum(axis=1)) / df['총중량']
+        gap = np.abs(df[TOTAL_TARGET] - df[WEIGHTS].sum(axis=1)) / df[TOTAL_TARGET]
         if (gap > .01).any():
-            warnings.append(f'입력 총중량과 SWBS 합계가 1% 이상 다른 자료 {(gap > .01).sum()}척. 총중량 정의를 확인하세요.')
+            warnings.append(f'입력 총중량−SWBS700과 SWBS100~600 합계가 1% 이상 다른 자료 {(gap > .01).sum()}척. 총중량 정의를 확인하세요.')
         # Independent baseline, explicitly distinct from the seven supplied formulas.
         try:
-            models['총중량_독립회귀'] = fit_one(df, '총중량', ['LBD', 'P'])
+            models[TOTAL_MODEL] = fit_one(df, TOTAL_TARGET, ['LBD', 'P'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
-    return {'version': 3, 'mode':'ship_type_year', 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
+    return {'version': 3, 'mode':'ship_type_year_exclude_700', 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
 
 def predict(df, bundle):
     validate_model_types(bundle)
@@ -193,7 +208,7 @@ def predict(df, bundle):
     out = df.copy()
     for name, model in bundle['models'].items():
         out[name + '_예측_tonne'] = predict_one(df, model)
-    out['총중량_SWBS합계_tonne'] = sum(out[c + '_예측_tonne'] for c in WEIGHTS)
+    out[TOTAL_SUM_COLUMN] = sum(out[c + '_예측_tonne'] for c in WEIGHTS)
     warnings = []
     model = bundle['models']['SWBS100']
     for _, row in df.iterrows():
@@ -201,6 +216,8 @@ def predict(df, bundle):
                    if c != '순항속력' and not lo <= row[c] <= hi]
         warnings.append('학습범위 밖: ' + ', '.join(outside) if outside else '')
     out['주의'] = warnings
+    out['중량 범위'] = 'SWBS700 제외 중량'
+    if '총중량' in df and 'SWBS700' in df:out['실적_경하중량_700제외_tonne']=df['총중량']-df['SWBS700']
     return out
 
 def coefficients(bundle):
@@ -228,7 +245,7 @@ def export(path, df, bundle):
         if audit: pd.DataFrame(audit).drop_duplicates().to_excel(writer, sheet_name='제외 행', index=False)
         metrics = [{k: m[k] for k in ['target','n','parameters','rmse_tonne','mape_percent','r2','condition_number']} for m in bundle['models'].values()]
         pd.DataFrame(metrics).to_excel(writer, sheet_name='학습적합도', index=False)
-        pd.DataFrame({'주의': bundle['warnings'] + ['적합도는 학습자료 기준이며 외부 검증 성능이 아닙니다.', '총중량_SWBS합계는 100~700 합계입니다. 독립회귀 총중량과 구분하세요.', '순항속력은 입력에 보존하지만 제공된 식에 없어 회귀에 사용하지 않습니다.']}).to_excel(writer, sheet_name='안내', index=False)
+        pd.DataFrame({'주의': bundle['warnings'] + ['적합도는 학습자료 기준이며 외부 검증 성능이 아닙니다.', '모든 예측 중량은 SWBS700 제외입니다. 합계는 100~600만 합산하며 직접 회귀는 실적 총 경하중량−실적 SWBS700으로 학습합니다.', '순항속력은 입력에 보존하지만 제공된 식에 없어 회귀에 사용하지 않습니다.']}).to_excel(writer, sheet_name='안내', index=False)
 
 def template(path):
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
@@ -248,7 +265,7 @@ def template(path):
     ws.auto_filter.ref = ws.dimensions
     units = ['식별번호', '함종', '함유형', 'year', 'm', 'm', 'm', 'hp', 'kW', 'kn'] + ['tonne'] * 8
     for cell, unit in zip(ws[1], units):
-        cell.comment = Comment('단위: ' + unit + (' / 경하중량' if cell.value == HEADERS['총중량'] else ''), 'Naval Ship Design')
+        cell.comment = Comment('단위: ' + unit + (' / SWBS700 포함 원래 경하중량. 프로그램이 SWBS700을 한 번 공제합니다.' if cell.value == HEADERS['총중량'] else ' / 공제용 실적 중량(0 허용). 예측하지 않습니다.' if cell.value==HEADERS['SWBS700'] else ''), 'Naval Ship Design')
     validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPES + ['초계함','초계정']) + '"')
     validation.errorTitle = '함종 확인'; validation.error = '목록에서 함종을 선택하세요.'
     validation.showErrorMessage = True; ws.add_data_validation(validation); validation.add('B2:B10000')
@@ -258,11 +275,11 @@ def template(path):
                  '첫 번째 시트의 순번에 함정 고유 번호를 입력하세요. 중복·빈 번호는 제외됩니다. 001처럼 앞의 0을 유지할 수 있습니다.',
                  '함유형은 별도 기록 항목이며 회귀계수에는 사용하지 않습니다. 입력한 경우 빈 값·?가 있는 행은 제외합니다.',
                  '기존 자료와 추가 자료를 합친 전체 파일을 업로드하면 계수를 다시 추정합니다.',
-                 'SWBS100~700: 각 계열 총중량(tonne), 총중량: 실제 경하중량(tonne).',
+                 'SWBS100~600은 추정용 실적 중량, SWBS700은 공제용 실적 중량(0 허용), 총중량은 SWBS700 포함 원래 경하중량입니다.',
                  '빈 값, ?, 수치 오류, 0·음수, 잘못된 함종·연도가 있는 함정 행은 모든 회귀분석에서 제외합니다. 총중량도 필수입니다.',
                  '길이/폭/깊이 m, 소요마력 hp, 소요전력 kW, 순항속력 kn.',
                  '속력은 기록용이며 현재 회귀식에는 사용하지 않습니다.',
-                 '0 또는 결측 SWBS 중량은 학습할 수 없습니다.',
+                 'SWBS100~600은 양수, SWBS700은 0 이상이어야 합니다. 총중량−SWBS700을 별도 경하중량 모형에 학습합니다. 이미 700을 뺀 값을 총중량에 넣지 마세요.',
                  '초계함·초계정은 호위함과 통합 학습합니다.',
                  '신규 함정은 GUI의 설계 제원 입력란에서 직접 입력하세요.']:
         guide.append([text])
@@ -313,7 +330,7 @@ def save_model_excel(path, bundle):
                               'R2, RMSE and diagnostics describe the original training fit; editing coefficients does not recompute them.',
                               '기준 함종은 유효 학습 척수가 가장 많은 함종입니다. 동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.',
                               '회귀계수 보기 시트는 열람용입니다. 모델을 변경하려면 재학습 후 저장을 권장합니다.'] + bundle.get('warnings', [])}).to_excel(writer, sheet_name='Notes', index=False)
-        pd.DataFrame([{'Format': 'NSWE Ship Type Year Model', 'Version': 1}]).to_excel(writer, sheet_name='Format', index=False)
+        pd.DataFrame([{'Format': 'NSWE Ship Type Year Excl700 Model', 'Version': 1}]).to_excel(writer, sheet_name='Format', index=False)
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill
     wb = load_workbook(path)
@@ -330,7 +347,7 @@ def load_model_excel(path):
     try:
         with pd.ExcelFile(path, engine='openpyxl') as book:
             meta = pd.read_excel(book, sheet_name='Format')
-            if len(meta)!=1 or meta.iloc[0]['Format']!='NSWE Ship Type Year Model' or meta.iloc[0]['Version']!=1:
+            if len(meta)!=1 or meta.iloc[0]['Format']!='NSWE Ship Type Year Excl700 Model' or meta.iloc[0]['Version']!=1:
                 raise ValueError('지원하지 않는 모델 형식입니다.')
             params = pd.read_excel(book, sheet_name='Model Parameters')
             types = pd.read_excel(book, sheet_name='Ship Types')
@@ -341,7 +358,7 @@ def load_model_excel(path):
             if '함유형' in diagnostics: diagnostics['함유형'] = diagnostics['함유형'].fillna('')
             excluded = pd.read_excel(book, sheet_name='Excluded Rows', dtype={'순번':str}).fillna('').to_dict('records')
             notes = pd.read_excel(book, sheet_name='Notes')['Note'].dropna().astype(str).tolist()[6:]
-        expected = set(WEIGHTS + ['총중량_독립회귀'])
+        expected = set(WEIGHTS + [TOTAL_MODEL])
         if params.empty or params['Target'].duplicated().any() or not set(WEIGHTS)<=set(params['Target']) or not set(params['Target'])<=expected:
             raise ValueError('계열별 모델 목록이 잘못되었습니다.')
         def finite(value, name, positive=False):
@@ -378,7 +395,7 @@ def load_model_excel(path):
                 bounds[r['Variable']]=[lo,hi]
             if set(bounds)!=set(BASE[1:]):raise ValueError('학습 범위가 누락되었습니다.')
             counts={r['ShipType']: integer(r['Count'],'Count') for _,r in group.iterrows() if pd.notna(r['Count'])}
-            models[name]={'target': '총중량' if name=='총중량_독립회귀' else name,
+            models[name]={'target': TOTAL_TARGET if name==TOTAL_MODEL else name,
                           'terms':terms, 'classes':classes, 'coef':coef, 'smearing':finite(row['C'],'C',True),
                           'mean_years':mean_years,'gamma':gamma,'year_by_type':year_by_type, 'ranges':bounds,
                           'n':integer(row['N'],'N'), 'parameters':integer(row['Parameters'],'Parameters'),
@@ -387,7 +404,7 @@ def load_model_excel(path):
                           'condition_number':finite(row['ConditionNumber'],'ConditionNumber',True),
                           'class_counts':counts,
                           'diagnostics':diagnostics[diagnostics['Target']==name].drop(columns='Target').to_dict('records')}
-        bundle={'version':3,'mode':'ship_type_year','models':models,'warnings':notes,'excluded_rows':excluded}
+        bundle={'version':3,'mode':'ship_type_year_exclude_700','models':models,'warnings':notes,'excluded_rows':excluded}
         validate_model_types(bundle)
         return bundle
     except (KeyError, TypeError, IndexError) as e:

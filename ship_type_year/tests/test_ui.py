@@ -26,9 +26,12 @@ class UITests(unittest.TestCase):
                 self.assertEqual(app.data.iloc[0]['취역연도'],app.bundle['models']['SWBS100']['mean_years']['호위함'])
                 self.assertIn('호위함',app.estimation_assumption.get())
                 self.assertIn('tonne',app.sum_value.get());self.assertIn('tonne',app.total_value.get())
-                self.assertEqual(len(app.result_tree.get_children()),7)
+                self.assertEqual(len(app.result_tree.get_children()),6)
                 app.inputs['취역연도'].set('2030');app.estimate();root.update()
                 self.assertIn('2030',app.prediction_note.get())
+                self.assertIn('700계열 제외',app.prediction_note.get())
+                self.assertNotIn('SWBS700',app.bundle['models'])
+                self.assertEqual(len(app.metric_tree.get_children()),7)
                 p=Path(tmp)/'result.xlsx'
                 with patch.object(app,'choose',return_value=str(p)),patch('app.messagebox.showinfo'):app.report()
                 self.assertTrue(p.exists())

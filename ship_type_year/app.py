@@ -6,14 +6,14 @@ from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from equation_guide import GUIDE_ROWS, TABLE_EXPLANATION
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
-                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, SHIP_ALIASES, diagnostic_rows, diagnostic_metrics)
+                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics)
 
 TITLE = 'Naval Ship Weight Estimator - Ship Type Year'
 NAVY, INK, TEAL, GOLD = '#102638', '#19384a', '#087f87', '#c69c55'
 BG, WHITE, MUTED = '#edf2f5', '#ffffff', '#607887'
 EN, KO = 'Times New Roman', '맑은 고딕'
 SERIES = ['Hull Structure', 'Propulsion', 'Electrical', 'Command & Surveillance',
-          'Auxiliary Systems', 'Outfit & Furnishings', 'Armament']
+          'Auxiliary Systems', 'Outfit & Furnishings']
 
 class App:
     def __init__(self, root):
@@ -105,7 +105,7 @@ class App:
     def design_panel(self):
         panel = tk.Frame(self.design_tab, bg=WHITE, padx=20, pady=15); panel.pack(fill='both', expand=True)
         self.label(panel, 'Weight Estimation', 21, bold=True, english=True).pack(anchor='w')
-        self.label(panel, '함종·길이·폭·깊이·소요마력·소요전력으로 SWBS100~700 및 경하중량을 추정합니다.', 10, MUTED).pack(anchor='w', pady=(3,12))
+        self.label(panel, '함종·길이·폭·깊이·소요마력·소요전력으로 SWBS100~600 및 700계열 제외 경하중량을 추정합니다.', 10, MUTED).pack(anchor='w', pady=(3,12))
         form = tk.Frame(panel, bg=WHITE); form.pack(fill='x')
         self.inputs = {}
         fields = [('함분류','Ship Type / 함종'), ('길이','Length L / 길이 (m)'),
@@ -128,7 +128,7 @@ class App:
         tk.Label(row,textvariable=self.estimation_assumption,font=(KO,9),fg=MUTED,bg=WHITE,wraplength=600,justify='left').pack(side='left',padx=14)
         cards=tk.Frame(panel,bg=WHITE); cards.pack(fill='x',pady=12)
         self.sum_value=tk.StringVar(value='—'); self.total_value=tk.StringVar(value='—')
-        for title,var,color in [('SWBS100–700 Sum / 계열별 합산 중량',self.sum_value,TEAL),('Lightship Regression / 전체 경하중량 직접 추정',self.total_value,INK)]:
+        for title,var,color in [('SWBS100–600 합계 / 700계열 제외',self.sum_value,TEAL),('경하중량 직접 회귀 / 700계열 제외',self.total_value,INK)]:
             card=tk.Frame(cards,bg='#edf4f6',highlightbackground='#d3e1e7',highlightthickness=1,padx=14,pady=10); card.pack(side='left',fill='both',expand=True,padx=(0,10))
             self.label(card,title,11,color,'#edf4f6',True,True).pack(anchor='w')
             tk.Label(card,textvariable=var,font=(EN,25,'bold'),fg=color,bg='#edf4f6').pack(anchor='w')
@@ -338,11 +338,11 @@ class App:
 
     def draw_chart(self):
         c=self.chart; c.delete('all'); width=max(c.winfo_width(),240)
-        c.create_text(12,16,anchor='w',text='SWBS WEIGHT DISTRIBUTION',font=(EN,11,'bold'),fill=INK)
+        c.create_text(12,16,anchor='w',text='SWBS100–600 / EXCLUDING 700',font=(EN,11,'bold'),fill=INK)
         weights=getattr(self,'last_weights',None)
         if weights is None:
             c.create_text(width/2,100,text='Awaiting design estimate',font=(EN,13,'italic'),fill=MUTED); return
-        mx=max(weights) or 1; step=max(23,min(33,(c.winfo_height()-35)/7))
+        mx=max(weights) or 1; step=max(23,min(33,(c.winfo_height()-35)/6))
         for i,w in enumerate(weights):
             y=38+i*step
             c.create_text(12,y+7,anchor='w',text=str((i+1)*100),font=(EN,10),fill=INK)
@@ -413,7 +413,7 @@ class App:
                    'R²·RMSE·MAPE 및 그래프는 학습자료 기준이며 독립 검증 성능이 아닙니다.',
                    '엑셀 모델에는 전체 정밀도의 계수·학습 범위·진단 결과가 저장됩니다.']+self.bundle.get('warnings',[])))
     def save(self):
-        self.require();p=self.choose(True,initialfile='Ship Type Year Model.xlsx')
+        self.require();p=self.choose(True,initialfile='Ship Type Year Excluding 700 Model.xlsx')
         if p:save_model_excel(p,self.bundle);self.status.set('MODEL SAVED  |  '+p)
     def load(self):
         p=self.choose()
@@ -452,14 +452,14 @@ class App:
         self.require();data=self.design_data();result=predict(data,self.bundle)
         self.data=data;self.render_result(result.iloc[0]);self.status.set('ESTIMATION COMPLETE  |  Export Results to Excel로 저장하세요.')
     def render_result(self,row):
-        self.sum_value.set(f"{row['총중량_SWBS합계_tonne']:,.2f} tonne")
-        key='총중량_독립회귀_예측_tonne'
+        self.sum_value.set(f"{row[TOTAL_SUM_COLUMN]:,.2f} tonne")
+        key=TOTAL_MODEL+'_예측_tonne'
         self.total_value.set(f"{row[key]:,.2f} tonne" if key in row else 'Not trained / 미학습')
-        self.last_weights=[float(row[f'SWBS{i}_예측_tonne']) for i in range(100,800,100)]
+        self.last_weights=[float(row[f'SWBS{i}_예측_tonne']) for i in range(100,700,100)]
         self.result_tree.delete(*self.result_tree.get_children())
         for i,(name,w) in enumerate(zip(SERIES,self.last_weights)):self.result_tree.insert('','end',values=(str((i+1)*100),name,f'{w:,.2f}'))
-        note=f"함종: {row['함분류']} / 취역 예상연도: {row['취역연도']:.2f} ({row.get('연도 적용','입력연도')})  |  "+(row['주의'] or '학습자료의 입력 범위 내')
-        if key not in row:note+='  |  실제 총중량을 포함한 실적함 자료를 학습하면 직접 회귀를 사용할 수 있습니다.'
+        note=f"함종: {row['함분류']} / 700계열 제외 / 취역 예상연도: {row['취역연도']:.2f} ({row.get('연도 적용','입력연도')})  |  "+(row['주의'] or '학습자료의 입력 범위 내')
+        if key not in row:note+='  |  원래 경하중량과 공제용 실적 SWBS700을 포함한 자료를 학습하면 직접 회귀를 사용할 수 있습니다.'
         self.prediction_note.set(note);self.draw_chart()
     def report(self):
         self.require()
