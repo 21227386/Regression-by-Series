@@ -7,6 +7,9 @@ def metrics(actual,predicted):
     return {'mape':float(np.mean(abs((predicted-actual)/actual))*100),'rmse':float(np.sqrt(np.mean((predicted-actual)**2)))}
 
 def refit_scale(df,base,q,diagnostics=True):
+    if base.get('kind')=='additive':
+        from additive import refit
+        return refit(df,base,q,diagnostics)
     from model import design,predict_one
     x=design(df,base['terms'],base['classes'],base['mean_years'],False)
     if base.get('size_by_type'):

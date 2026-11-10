@@ -31,6 +31,12 @@ jobs:
           $check = Start-Process -FilePath "dist/SWBS_Regression.exe" -ArgumentList @('--verify-equation-renderer', $output) -PassThru -Wait
           if ($check.ExitCode -ne 0 -or !(Test-Path $output)) { throw "Bundled equation renderer failed" }
           if ((Get-Item $output).Length -lt 1000) { throw "Equation image is empty" }
+      - name: Verify bundled nonlinear regression engine
+        shell: pwsh
+        run: |
+          $output = Join-Path (Get-Location) "frozen-regression.txt"
+          $check = Start-Process -FilePath "dist/SWBS_Regression.exe" -ArgumentList @('--verify-regression-engine', $output) -PassThru -Wait
+          if ($check.ExitCode -ne 0 -or !(Test-Path $output)) { throw "Bundled regression engine failed" }
       - name: Verify EXE starts
         shell: pwsh
         run: |
@@ -48,4 +54,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="ship-type-year-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          gh release create "$tag" dist/SWBS_Regression.exe ship-type-year-preview.png ship-type-year-equations.png year-search-preview.png type-size-coefficients.png formula-comparison.png --target "$GITHUB_SHA" --title "SWBS Regression - Ship Type Year ${GITHUB_RUN_NUMBER}" --notes "Compare current and recommended equations for every SWBS100-600 and net lightship model. Search 0-100% year effects for each formula and select the lowest full-fleet training MAPE. Includes animated progress and numerical final equations. Re-upload the full fleet to refit. Existing versions remain unchanged."
+          gh release create "$tag" dist/SWBS_Regression.exe ship-type-year-preview.png ship-type-year-equations.png year-search-preview.png type-size-coefficients.png --target "$GITHUB_SHA" --title "SWBS Regression - Ship Type Year ${GITHUB_RUN_NUMBER}" --notes "Compare three candidate equations for every SWBS100-600 and net lightship model. Search 0-100% year effects for each formula and select the lowest full-fleet training MAPE. Includes positive additive models, animated progress and final equations only. Opens SWBS100 after training. Removed formula comparison UI and patrol boat design option. Re-upload the full fleet to refit. Existing versions remain unchanged."

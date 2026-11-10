@@ -18,13 +18,15 @@ class UITests(unittest.TestCase):
                 df=fleet();p=Path(tmp)/'fleet.xlsx';df.to_excel(p,index=False)
                 with patch.object(app,'choose',return_value=str(p)):app.fit()
                 self.assertTrue(app.analysis_dialog.winfo_exists())
-                deadline=time.monotonic()+60
+                deadline=time.monotonic()+120
                 while app.busy and time.monotonic()<deadline:root.update();time.sleep(.02)
                 self.assertFalse(app.busy);self.assertIsNotNone(app.bundle)
                 self.assertFalse(app.analysis_dialog.winfo_exists())
                 self.assertEqual(len(app.search_tree.get_children()),101)
-                self.assertEqual(len(app.comparison_tree.get_children()),14)
-                self.assertEqual(app.reg_tabs.select(),str(app.comparison_tab))
+                self.assertFalse(hasattr(app,'comparison_tree'))
+                self.assertNotIn('초계정',app.ship_type_entry['values'])
+                self.assertEqual(app.reg_target.get(),'SWBS100')
+                self.assertEqual(app.reg_tabs.index(app.reg_tabs.select()),0)
                 self.assertFalse(hasattr(app,'validation_mode'))
                 self.assertTrue(all('CV' not in c for c in app.search_tree['columns']))
                 self.assertTrue(app.bundle['models']['SWBS100']['size_by_type'])
@@ -51,7 +53,10 @@ class UITests(unittest.TestCase):
                 app.open_guide();root.update()
                 self.assertEqual(len(app.final_formula_images),7)
                 self.assertTrue(app.use_design_values.get())
+                self.assertFalse(hasattr(app,'equation_images'))
+                self.assertFalse(any(app.reg_tabs.tab(t,'text')=='Formula Comparison' for t in app.reg_tabs.tabs()))
                 if os.environ.get('UI_SCREENSHOT'):
+                    root.attributes('-topmost',True);root.lift();root.update()
                     from PIL import ImageGrab
                     app.status.set('DEMONSTRATION | SYNTHETIC TEST DATA / 실제 함정 데이터가 아닙니다.');app.open_estimation();root.update()
                     box=(root.winfo_rootx(),root.winfo_rooty(),root.winfo_rootx()+root.winfo_width(),root.winfo_rooty()+root.winfo_height())
@@ -62,6 +67,5 @@ class UITests(unittest.TestCase):
                     ImageGrab.grab(bbox=box).save('year-search-preview.png')
                     app.reg_target.set('SWBS100');app.update_diagnostics();app.reg_tabs.select(3);root.update();time.sleep(.3)
                     ImageGrab.grab(bbox=box).save('type-size-coefficients.png')
-                    app.reg_tabs.select(app.comparison_tab);root.update()
-                    ImageGrab.grab(bbox=box).save('formula-comparison.png')
+
         finally:root.destroy()
