@@ -217,8 +217,9 @@ class App:
         self.label(overview,'점의 순번으로 함정을 식별합니다. 마우스: 상세 정보 / 클릭: 진단표 이동. 적합도는 학습자료 기준입니다.',9,MUTED).pack(side='bottom',anchor='w',pady=3)
         self.label(overview,'왼쪽: 실제·예측 중량(tonne) / 오른쪽: 예측 중량 대비 오차율(%)',9,MUTED).pack(side='bottom',anchor='w',pady=3)
         self.reg_graph.pack(fill='both',expand=True,pady=8)
-        cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','연도효과%','기본γt','적용γt','함종평균연도']
-        self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100,100,100])
+        cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','연도효과%','기본γt','적용γt','함종평균연도','기준LBD(m³)']
+        self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100,100,100,130])
+        self.coeff_tree.heading('LBD',text='LBD 지수 α/αt');self.coeff_tree.column('LBD',width=125)
         self.ship_diagnostics_tab=ships
         self.ship_tree=self.scroll_table(ships,['Ship No.','Excel Row','Ship Type','Subtype','Dt','F(Y)','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,80,90,100,85,95,120,120,120,100])
         self.ship_tree.tag_configure('large_error',foreground='#ae4437')
@@ -295,8 +296,8 @@ class App:
                 if cls is not None and ship_type!=cls:continue
                 values=[name,ship_type,x.get('class_counts',{}).get(ship_type,'—'),x['classes'][0],
                         f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
-                values += [f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE']]
-                self.coeff_tree.insert('','end',values=values+[f"{x['year_scale']*100:.0f}" if x.get('year_scale') is not None else '—',f"{x.get('gamma_base',{}).get(ship_type,x['gamma'].get(ship_type,0)):.8g}" if x['year_by_type'] else '—',f"{x['gamma'][ship_type]:.8g}" if x['year_by_type'] else '—', f"{x['mean_years'][ship_type]:.4f}"])
+                values += [f"{x['size_alpha'][ship_type]:.8g}" if t=='LBD' and x.get('size_by_type') else f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE']]
+                self.coeff_tree.insert('','end',values=values+[f"{x['year_scale']*100:.0f}" if x.get('year_scale') is not None else '—',f"{x.get('gamma_base',{}).get(ship_type,x['gamma'].get(ship_type,0)):.8g}" if x['year_by_type'] else '—',f"{x['gamma'][ship_type]:.8g}" if x['year_by_type'] else '—', f"{x['mean_years'][ship_type]:.4f}",f"{x['volume_reference']:,.3f}" if x.get('size_by_type') else '—'])
         self.graph_hover.set('함정별 표는 절대 오차율이 큰 순서입니다. |오차율| 20% 이상은 붉은색으로 표시합니다.')
         self.update_year_search()
         self.draw_regression_graphs()
@@ -306,7 +307,7 @@ class App:
         if not self.bundle:return
         m=self.bundle['models'].get(self.reg_target.get(),{})
         if not m.get('year_by_type'):
-            self.search_note.set('선택 계열은 연도 항이 없어 비율 탐색 대상이 아닙니다.');self.draw_search_graph();return
+            self.search_note.set('선택 계열은 연도 항이 없어 비율 탐색 대상이 아닙니다. 100계열은 함종별 규모 지수 αt를 사용합니다.');self.draw_search_graph();return
         info=m.get('selection',{});q=m.get('year_scale',1)
         basis='함급별' if info.get('basis')=='group' else '함종 내 척별'
         self.search_note.set(f"선택 {q*100:.0f}% / {info.get('status','이전 모델')} / {basis} 검증 {info.get('validation_n',0)}/{m['n']}척.\n{info.get('reason') or ''} 후보 선택용 검증이며 최종 독립 시험 성능은 아닙니다. 함종 필터와 무관하게 계열 전체에서 비율을 선택합니다.")
@@ -456,7 +457,7 @@ class App:
                    '유효 학습 척수 / Valid ships: '+str(m['n']),
                    'Dt는 기준 함종을 1로 한 함종별 상대 계수입니다.',
                    '계수 표의 LBD/LB/L/P/PE 열은 해당 변수의 회귀지수이며 γt는 해당 함종의 10년당 연도 효과이며 함종평균연도를 기준으로 합니다.',
-                   '함정별 Dt는 Ship Diagnostics에서 확인합니다. 척별 독립 계수를 따로 학습하지 않습니다.',
+                   '100계열의 LBD 열은 함종별 αt이며, 기준LBD로 나눈 규모 비율에 적용합니다. 함정별 Dt는 Ship Diagnostics에서 확인합니다. 척별 독립 계수를 따로 학습하지 않습니다.',
                    '잔차 = 실제−예측, 오차율 = (예측−실제)/실제 × 100.',
                    'R²·RMSE·MAPE 및 그래프는 학습자료 기준이며 독립 검증 성능이 아닙니다.',
                    '엑셀 모델에는 전체 정밀도의 계수·학습 범위·진단 결과가 저장됩니다.']+self.bundle.get('warnings',[])))

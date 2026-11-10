@@ -118,6 +118,30 @@ class ModelTests(unittest.TestCase):
         df['함급']=[f'class-{i//10}' for i in range(100)]
         splits,_=validation_splits(df,'group')
         for tr,te in splits:self.assertFalse(set(df.iloc[tr]['함급']) & set(df.iloc[te]['함급']))
+    def test_type_specific_hull_slopes_and_equal_weight_pair(self):
+        from model import fit_one, predict_one
+        df=fleet()
+        volume=df['길이']*df['폭']*df['깊이']
+        ref=float(np.exp(np.log(volume).mean()))
+        expected={'구축함':0.0,'호위함':.9}
+        df['SWBS100']=[1318.8*(v/ref)**expected[c] for v,c in zip(volume,df['함분류'])]
+        m=fit_one(df,'SWBS100',TERMS[100])
+        self.assertTrue(m['size_by_type']);self.assertEqual(m['parameters'],4)
+        for cls,alpha in expected.items():self.assertAlmostEqual(m['size_alpha'][cls],alpha)
+        self.assertAlmostEqual(m['volume_reference'],ref)
+        pair=df.iloc[[0,0]].copy()
+        pair['길이']=[114,103];pair['폭']=[17,15];pair['깊이']=[8.5,7.5]
+        weights=predict_one(pair,m)
+        np.testing.assert_allclose(weights,[1318.8,1318.8],rtol=1e-9)
+        # Unlike the old common exponent, changing size can have a different effect for each type.
+        for cls,alpha in expected.items():
+            one=df.iloc[[0]].copy();one['함분류']=cls
+            larger=one.copy();larger['길이']*=2
+            self.assertAlmostEqual(predict_one(larger,m)[0]/predict_one(one,m)[0],2**alpha)
+    def test_hull_size_variation_required(self):
+        df=fleet();mask=df['함분류']=='호위함'
+        df.loc[mask,['길이','폭','깊이']]=[100,15,8]
+        with self.assertRaisesRegex(ValueError,'호위함'):train(df)
     def test_missing_year_variation_is_explicit(self):
         df=fleet();df.loc[df['함분류']=='호위함','취역연도']=2000
         with self.assertRaisesRegex(ValueError,'호위함'):train(df)
@@ -130,6 +154,9 @@ class ModelTests(unittest.TestCase):
                 self.assertEqual(m['mean_years'],loaded['models'][name]['mean_years'])
             self.assertEqual(loaded['models']['SWBS200']['diagnostics'][0]['순번'],'001')
             self.assertIn('γt',coefficients(b))
+            self.assertEqual(loaded['models']['SWBS100']['size_alpha'],b['models']['SWBS100']['size_alpha'])
+            self.assertAlmostEqual(loaded['models']['SWBS100']['volume_reference'],b['models']['SWBS100']['volume_reference'])
+            self.assertIn('αt',coefficients(b))
             self.assertEqual(len(loaded['models']['SWBS200']['year_search']),10)
             self.assertEqual(loaded['models']['SWBS200']['year_scale'],b['models']['SWBS200']['year_scale'])
     def test_patrol_pooling_and_input_exclusions(self):

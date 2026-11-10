@@ -41,4 +41,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="ship-type-year-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          gh release create "$tag" dist/SWBS_Regression.exe ship-type-year-preview.png ship-type-year-equations.png year-search-preview.png --target "$GITHUB_SHA" --title "SWBS Regression - Ship Type Year ${GITHUB_RUN_NUMBER}" --notes "Separate model with ship-type-specific year slopes and mean commissioning years. Refit the full fleet; existing versions remain unchanged."
+          gh release create "$tag" dist/SWBS_Regression.exe ship-type-year-preview.png ship-type-year-equations.png year-search-preview.png type-size-coefficients.png --target "$GITHUB_SHA" --title "SWBS Regression - Ship Type Year ${GITHUB_RUN_NUMBER}" --notes "Separate model with ship-type-specific year slopes and mean commissioning years. Refit the full fleet; existing versions remain unchanged."
