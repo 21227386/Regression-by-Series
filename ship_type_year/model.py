@@ -226,7 +226,7 @@ def predict_one(df, model):
     with np.errstate(over='raise', invalid='raise'):
         return np.exp(x @ np.asarray(coef)) * model['smearing']
 
-def train(df, validation_mode='ship'):
+def train(df):
     from year_search import select_year_scale
     df = normalize_types(df)
     if '총중량' in df:
@@ -247,10 +247,7 @@ def train(df, validation_mode='ship'):
             models[TOTAL_MODEL] = fit_one(df, TOTAL_TARGET, ['LBD', 'P'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
-    models={name:select_year_scale(df,m,validation_mode) for name,m in models.items()}
-    for name,m in models.items():
-        selected=m.get('selection',{})
-        if m['year_by_type'] and selected.get('status')!='검증 선택':warnings.append(f"{name}: {selected.get('status')} / 검증 {selected.get('validation_n',0)}/{len(df)}척. {selected.get('reason','')}")
+    models={name:select_year_scale(df,m) for name,m in models.items()}
     return {'version': 3, 'mode':'ship_type_year_exclude_700', 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
 
 def predict(df, bundle):
@@ -496,7 +493,5 @@ def diagnostic_metrics(rows):
 def write_search_sheets(writer,bundle):
     search=[{'Target':name,**r} for name,m in bundle['models'].items() for r in m.get('year_search',[])]
     selections=[{'Target':name,'selected_percent':None if m.get('year_scale') is None else m['year_scale']*100,**m.get('selection',{})} for name,m in bundle['models'].items()]
-    cv=[{'Target':name,**r} for name,m in bundle['models'].items() for r in m.get('cv_predictions',[])]
     pd.DataFrame(search).to_excel(writer,sheet_name='Year Search',index=False)
     pd.DataFrame(selections).to_excel(writer,sheet_name='Year Selection',index=False)
-    pd.DataFrame(cv).to_excel(writer,sheet_name='Validation Predictions',index=False)

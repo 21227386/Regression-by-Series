@@ -1,6 +1,6 @@
-"""Fold-local baseline estimation and constrained year-effect scale search."""
+"""Full-fleet training-MAPE selection of year-effect scales."""
 import numpy as np
-SCALES=tuple(i/100 for i in range(0,11))
+SCALES=tuple(i/100 for i in range(0,101))
 
 def metrics(actual,predicted):
     if not np.isfinite(predicted).all() or (predicted<=0).any():raise ValueError('유효하지 않은 예측값')
@@ -30,60 +30,24 @@ def refit_scale(df,base,q,diagnostics=True):
         m['diagnostics']=records
     return m
 
-def validation_splits(df,mode='ship'):
-    rng=np.random.default_rng(42);tests=[]
-    if mode=='group':
-        if '함급' not in df or df['함급'].isna().any() or df['함급'].astype(str).str.strip().eq('').any():return [],'함급별 검증에는 함급 열이 필요합니다. DDG/FFG 함유형은 사용하지 않습니다.'
-        groups=df['함급'].astype(str).str.strip().to_numpy();labels=np.unique(groups);rng.shuffle(labels)
-        if len(labels)<2:return [],'함급이 2개 이상 필요합니다.'
-        tests=[np.flatnonzero(np.isin(groups,part)) for part in np.array_split(labels,min(5,len(labels)))]
-    elif mode=='ship':
-        parts=[[] for _ in range(5)]
-        for cls in sorted(df['함분류'].unique()):
-            positions=np.flatnonzero(df['함분류'].to_numpy()==cls)
-            if len(positions)<3:continue
-            rng.shuffle(positions)
-            for k,part in enumerate(np.array_split(positions,min(5,len(positions)))):parts[k].extend(part.tolist())
-        tests=[np.array(sorted(p),dtype=int) for p in parts if p]
-    else:raise ValueError('검증 방식이 잘못되었습니다.')
-    return [(np.setdiff1d(np.arange(len(df)),t),t) for t in tests],''
-
-def select_year_scale(df,baseline,validation_mode='ship'):
-    from model import fit_one,predict_one
-    if not baseline['year_by_type']:return {**baseline,'year_scale':None,'gamma_base':{},'year_search':[],'selection':{'status':'연도 항 없음','basis':validation_mode,'validation_n':0,'folds':0,'reason':''},'cv_predictions':[]}
-    splits,reason=validation_splits(df,validation_mode);folds=[];failures=[]
-    for k,(tr,te) in enumerate(splits):
-        training,testing=df.iloc[tr],df.iloc[te]
-        try:
-            b=fit_one(training,baseline['target'],baseline['terms'])
-            if not set(testing['함분류'])<=set(b['classes']):raise ValueError('검증 함종의 학습 자료 없음')
-            folds.append((k+1,training,testing,b))
-        except (ValueError,FloatingPointError,np.linalg.LinAlgError) as e:failures.append(f'{k+1}차: {e}')
-    n=sum(len(te) for _,_,te,_ in folds);usable=len(folds)>=2 and n>=3
-    reason=reason or ' / '.join(failures[:3])
-    if n<len(df):reason=(reason+' / ' if reason else '')+f'자료 부족 또는 분할 실패로 {len(df)-n}척은 검증하지 못했습니다.'
-    if not usable:reason=reason or '유효 검증이 2회 이상·3척 이상이어야 합니다. 0% 임시 적용.'
-    rows=[];candidates={};cv={}
+def select_year_scale(df,baseline):
+    if not baseline['year_by_type']:
+        return {**baseline,'year_scale':None,'gamma_base':{},'year_search':[],
+                'selection':{'status':'연도 항 없음','basis':'train','train_n':len(df),'reason':''}}
+    rows=[]
     for q in SCALES:
-        r={'percent':int(round(q*100)),'train_mape':None,'train_rmse':None,'validation_mape':None,'validation_rmse':None,'validation_n':n,'folds':len(folds),'selected':False,'error':''}
+        row={'percent':int(round(q*100)),'train_mape':None,'train_rmse':None,'train_n':len(df),'selected':False,'error':''}
         try:
-            m=refit_scale(df,baseline,q);candidates[q]=m;r.update(train_mape=m['mape_percent'],train_rmse=m['rmse_tonne'])
-            if usable:
-                actual=[];predicted=[];details=[]
-                for fold,training,testing,b in folds:
-                    trial=refit_scale(training,b,q,False);prediction=predict_one(testing,trial)
-                    actual.extend(testing[b['target']].to_numpy());predicted.extend(prediction)
-                    for j,(idx,row) in enumerate(testing.iterrows()):details.append({'fold':fold,'순번':str(row.get('순번',int(idx)+1)),'엑셀 행':int(idx)+2,'함종':row['함분류'],'함급':str(row.get('함급','')),'실제중량':float(row[b['target']]),'예측중량':float(prediction[j])})
-                scores=metrics(np.asarray(actual),np.asarray(predicted));r.update(validation_mape=scores['mape'],validation_rmse=scores['rmse']);cv[q]=details
-        except (ValueError,FloatingPointError,OverflowError,np.linalg.LinAlgError) as e:r['error']=str(e)
-        rows.append(r)
-    valid=[r for r in rows if r['validation_mape'] is not None and not r['error']]
-    if valid:
-        best=min(valid,key=lambda r:(round(r['validation_mape'],8),round(r['validation_rmse'],8),r['percent']));q=best['percent']/100
-        status='검증 선택' if n==len(df) else '부분 검증 선택'
-    else:q=0.0;status='검증 불가 · 0% 임시 적용';reason=reason or '모든 후보의 검증 계산 실패'
-    result=candidates.get(q) or refit_scale(df,baseline,q)
-    for r in rows:r['selected']=r['percent']==int(round(q*100))
-    best=next(r for r in rows if r['selected'])
-    result.update(year_search=rows,selection={'status':status,'basis':validation_mode,'validation_n':n,'total_n':len(df),'folds':len(folds),'attempted_folds':len(splits),'reason':reason,'validation_mape':best['validation_mape'],'validation_rmse':best['validation_rmse']},cv_predictions=cv.get(q,[]))
+            candidate=refit_scale(df,baseline,q,False)
+            row.update(train_mape=candidate['mape_percent'],train_rmse=candidate['rmse_tonne'])
+        except (ValueError,FloatingPointError,OverflowError,np.linalg.LinAlgError) as e:row['error']=str(e)
+        rows.append(row)
+    valid=[r for r in rows if r['train_mape'] is not None and not r['error']]
+    if not valid:raise ValueError('모든 연도 효과 후보의 실적함 적합 계산이 실패했습니다.')
+    best=min(valid,key=lambda r:(round(r['train_mape'],8),round(r['train_rmse'],8),r['percent']))
+    q=best['percent']/100
+    result=refit_scale(df,baseline,q,True)
+    for r in rows:r['selected']=r['percent']==best['percent']
+    result.update(year_search=rows,selection={'status':'실적함 Train MAPE 최소 선택','basis':'train','train_n':len(df),'total_n':len(df),'reason':'',
+                                            'train_mape':best['train_mape'],'train_rmse':best['train_rmse']})
     return result
