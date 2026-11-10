@@ -253,7 +253,7 @@ def formula_text(m):
     return 'W = K'+(' × '+core if core else '')+' × Dt × exp[γt(Y−Ȳt)/10] × C'
 
 def train(df,progress=None,compare=True):
-    from year_search import select_year_scale
+    from year_search import select_year_scale,SCALES
     df=normalize_types(df)
     if '총중량' in df:
         if 'SWBS700' not in df:raise ValueError('총 경하중량에서 공제할 실적 SWBS700 중량이 필요합니다.')
@@ -278,7 +278,7 @@ def train(df,progress=None,compare=True):
             additive=candidate_id=='additional' and name not in ['SWBS100','SWBS400']
             entry={'계열':name,'후보':label,'candidate_id':candidate_id,'선택':False,'MAPE(%)':None,'RMSE(t)':None,'R²':None,'최대절대오차율(%)':None,'연도효과(%)':None,'식':formula_text({'terms':terms,'size_by_type':name=='SWBS100' and hull,'kind':'additive' if additive else 'power'}),'사유':''}
             def report(done,total,percent,index=index,label=label):
-                if progress:progress(index*101+done,count*101,f'{name} · {label} · 연도 효과 {percent}%')
+                if progress:progress(index*len(SCALES)+done,count*len(SCALES),f'{name} · {label} · 연도 효과 {percent}%')
             try:
                 if additive:
                     from additive import fit_baseline
@@ -290,7 +290,7 @@ def train(df,progress=None,compare=True):
                 entry.update({'MAPE(%)':m['mape_percent'],'RMSE(t)':m['rmse_tonne'],'R²':m['r2'],'최대절대오차율(%)':max(abs(d['오차율(%)']) for d in m['diagnostics']),'연도효과(%)':m['year_scale']*100,'사유':m.get('year_unavailable_reason','')})
                 searches.extend({'계열':name,'후보':label,**r} for r in m['year_search'])
             except (ValueError,FloatingPointError,OverflowError,np.linalg.LinAlgError) as e:
-                entry['사유']=str(e);warnings.append(name+' / '+label+' 계산 제외: '+str(e));report(101,101,100)
+                entry['사유']=str(e);warnings.append(name+' / '+label+' 계산 제외: '+str(e));report(len(SCALES),len(SCALES),200)
             comparisons.append(entry);index+=1
         if not candidates:
             reason=' / '.join(e['후보']+': '+e['사유'] for e in comparisons if e['계열']==name)
@@ -502,7 +502,7 @@ def load_model_excel(path):
             if set(bounds)!=set(BASE[1:]):raise ValueError('학습 범위가 누락되었습니다.')
             counts={r['ShipType']: integer(r['Count'],'Count') for _,r in group.iterrows() if pd.notna(r['Count'])}
             scale=finite(row['YearScale'],'YearScale') if year_by_type and 'YearScale' in row and pd.notna(row['YearScale']) else (1.0 if year_by_type else None)
-            if scale is not None and not 0<=scale<=1:raise ValueError('YearScale은 0~1 범위여야 합니다.')
+            if scale is not None and not 0<=scale<=2:raise ValueError('YearScale은 0~2 범위여야 합니다.')
             base_gamma={r['ShipType']:finite(r.get('BaseGamma',r['Gamma']),'BaseGamma') for _,r in group.iterrows()} if year_by_type else {}
             size_by_type=bool(row.get('SizeByType',False)) if pd.notna(row.get('SizeByType',False)) else False
             if size_by_type and name!='SWBS100':raise ValueError('함종별 규모 지수는 SWBS100에서만 지원합니다.')

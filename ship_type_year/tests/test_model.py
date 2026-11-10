@@ -33,7 +33,7 @@ class ModelTests(unittest.TestCase):
                 expected=[.08,-.11] if name==TOTAL_MODEL else [.12,-.2]
                 np.testing.assert_allclose(list(m['gamma_base'].values()),expected,atol=1e-10)
                 np.testing.assert_allclose(list(m['gamma'].values()),np.array(expected)*m['year_scale'],atol=1e-10)
-                self.assertLessEqual(m['year_scale'],1)
+                self.assertLessEqual(m['year_scale'],2)
             self.assertEqual(m['mean_years'],df.groupby('함분류')['취역연도'].mean().to_dict())
             self.assertNotIn('mean_year',m)
         out=predict(df,b)
@@ -103,8 +103,8 @@ class ModelTests(unittest.TestCase):
         with patch('model.fit_one',side_effect=AssertionError('No fold fitting allowed')):
             chosen=select_year_scale(df,base)
         rows=chosen['year_search']
-        self.assertEqual(len(rows),101)
-        self.assertEqual([r['percent'] for r in rows],list(range(101)))
+        self.assertEqual(len(rows),201)
+        self.assertEqual([r['percent'] for r in rows],list(range(201)))
         self.assertEqual(chosen['selection']['basis'],'train')
         self.assertTrue(all(r['train_n']==100 for r in rows))
         self.assertTrue(all('validation_mape' not in r for r in rows))
@@ -156,7 +156,7 @@ class ModelTests(unittest.TestCase):
             if m['year_by_type']:
                 self.assertEqual(m['year_scale'],0)
                 self.assertTrue(all(v==0 for v in m['gamma'].values()))
-                self.assertEqual([r['percent'] for r in m['year_search']],list(range(101)))
+                self.assertEqual([r['percent'] for r in m['year_search']],list(range(201)))
                 self.assertEqual(sum(bool(r['selected']) for r in m['year_search']),1)
         earlier=df.iloc[[0]].copy();later=earlier.copy();later['취역연도']+=30
         for name in b['models']:
@@ -175,11 +175,11 @@ class ModelTests(unittest.TestCase):
             self.assertTrue(all(r['error'] for r in m['year_search'][1:]))
     def test_all_models_year_search_and_progress(self):
         calls=[];b=train(fleet(),progress=lambda *v:calls.append(v))
-        self.assertEqual([v[0] for v in calls],list(range(1,708)))
-        self.assertTrue(all(v[1]==707 for v in calls))
+        self.assertEqual([v[0] for v in calls],list(range(1,1408)))
+        self.assertTrue(all(v[1]==1407 for v in calls))
         for m in b['models'].values():
             self.assertTrue(m['year_by_type']);self.assertTrue(m['year_estimated'])
-            self.assertEqual(len(m['year_search']),101)
+            self.assertEqual(len(m['year_search']),201)
             self.assertEqual(sum(r['selected'] for r in m['year_search']),1)
     def test_final_numerical_equations_and_images(self):
         from final_equations import final_equation,render_png,number
@@ -205,7 +205,7 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(loaded['models']['SWBS100']['size_alpha'],b['models']['SWBS100']['size_alpha'])
             self.assertAlmostEqual(loaded['models']['SWBS100']['volume_reference'],b['models']['SWBS100']['volume_reference'])
             self.assertIn('αt',coefficients(b))
-            self.assertEqual(len(loaded['models']['SWBS200']['year_search']),101)
+            self.assertEqual(len(loaded['models']['SWBS200']['year_search']),201)
             self.assertEqual(loaded['models']['SWBS200']['year_scale'],b['models']['SWBS200']['year_scale'])
     def test_patrol_pooling_and_input_exclusions(self):
         df=fleet();df.loc[df['함분류']=='호위함','함분류']='초계정'
@@ -213,3 +213,18 @@ class ModelTests(unittest.TestCase):
             p=Path(tmp)/'fleet.xlsx';df.to_excel(p,index=False);data=read_excel(p)
             b=train(data);self.assertIn('호위함',b['models']['SWBS200']['gamma'])
             self.assertNotIn('초계정',b['models']['SWBS200']['gamma'])
+
+    def test_above_100_percent_can_win_and_roundtrip(self):
+        from model import fit_one,predict_one
+        from year_search import refit_scale
+        df=fleet();df['SWBS200']*=np.exp(np.random.default_rng(1).normal(0,.8,len(df)))
+        bundle=train(df);m=bundle['models']['SWBS200']
+        self.assertGreater(m['year_scale'],1)
+        self.assertLess(m['mape_percent'],min(r['train_mape'] for r in m['year_search'] if r['percent']<=100))
+        doubled=refit_scale(df,fit_one(df,'SWBS200',TERMS[200]),2)
+        for cls in m['classes']:
+            self.assertAlmostEqual(doubled['gamma'][cls],2*doubled['gamma_base'][cls])
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'above100.xlsx';save_model_excel(p,bundle);loaded=load_model_excel(p)
+            self.assertEqual(loaded['models']['SWBS200']['year_scale'],m['year_scale'])
+            np.testing.assert_allclose(predict_one(df,loaded['models']['SWBS200']),predict_one(df,m),rtol=1e-12)

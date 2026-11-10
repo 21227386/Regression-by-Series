@@ -19,10 +19,10 @@ class ComparisonTests(unittest.TestCase):
         return df
     def test_recommended_selection_predictions_and_excel(self):
         df=self.recommended_fleet();calls=[];b=train(df,progress=lambda *x:calls.append(x))
-        self.assertEqual(calls[-1][0],2121)
+        self.assertEqual(calls[-1][0],4221)
         self.assertTrue(all(a[0]<b[0] for a,b in zip(calls,calls[1:])))
         self.assertEqual(len(b['formula_comparison']),21)
-        self.assertGreaterEqual(len(b['formula_searches']),1414)
+        self.assertGreaterEqual(len(b['formula_searches']),2814)
         out=predict(df,b)
         for name,m in b['models'].items():
             self.assertEqual(m['candidate_id'],'recommended',name)

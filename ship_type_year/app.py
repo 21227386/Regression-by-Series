@@ -7,9 +7,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import pandas as pd
+from year_search import SCALES,MAX_PERCENT
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
                    coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics, formula_text)
 
+TARGET_NAMES={'SWBS100':'Hull Structure','SWBS200':'Propulsion Plant','SWBS300':'Electric Plant',
+              'SWBS400':'Command & Surveillance','SWBS500':'Auxiliary Systems','SWBS600':'Outfit & Furnishings',
+              TOTAL_MODEL:'Lightship (Excluding SWBS700)'}
 TITLE = 'Naval Ship Weight Estimator - Ship Type Year'
 NAVY, INK, TEAL, GOLD = '#102638', '#19384a', '#087f87', '#c69c55'
 BG, WHITE, MUTED = '#edf2f5', '#ffffff', '#607887'
@@ -184,8 +188,10 @@ class App:
         self.reg_target=tk.StringVar(value='SWBS100')
         self.reg_selector=ttk.Combobox(select,textvariable=self.reg_target,state='readonly',width=23,values=[])
         self.reg_selector.pack(side='left');self.reg_selector.bind('<<ComboboxSelected>>',lambda e:self.update_diagnostics())
+        self.target_description=tk.StringVar(value='SWBS100 (Hull Structure)')
+        tk.Label(select,textvariable=self.target_description,bg=WHITE,fg=TEAL,font=(EN,12,'bold')).pack(side='left',padx=12)
         self.reg_stats=tk.StringVar(value='R² / RMSE / MAPE —')
-        tk.Label(select,textvariable=self.reg_stats,bg=WHITE,fg=TEAL,font=(EN,11,'bold')).pack(side='left',padx=12)
+        tk.Label(p,textvariable=self.reg_stats,bg=WHITE,fg=TEAL,font=(EN,11,'bold')).pack(anchor='w',pady=(0,5))
         filters=tk.Frame(p,bg=WHITE);filters.pack(fill='x',pady=(0,3))
         self.label(filters,'Ship Type',11,bold=True,english=True).pack(side='left',padx=(0,12))
         self.ship_filter=tk.StringVar(value='All Ship Types')
@@ -203,7 +209,7 @@ class App:
         self.build_guide(self.guide_tab)
         tabs.bind('<<NotebookTabChanged>>',lambda e:self.root.after_idle(self.refresh_final_equations),add='+')
         self.search_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(2,self.search_tab,text='Year Effect Search')
-        self.search_note=tk.StringVar(value='연도 효과 0%~100% (1% 간격) 후보를 비교합니다.')
+        self.search_note=tk.StringVar(value='연도 효과 0%~200% (1% 간격) 후보를 비교합니다.')
         tk.Label(self.search_tab,textvariable=self.search_note,bg=WHITE,fg=INK,font=(KO,10),wraplength=930,justify='left',anchor='w').pack(fill='x',padx=10,pady=8)
         self.search_graph=tk.Canvas(self.search_tab,bg='#f3f7fa',height=115,highlightthickness=0)
         self.search_graph.pack(side='bottom',fill='x',padx=10,pady=5)
@@ -308,7 +314,7 @@ class App:
         canvas=tk.Canvas(self.analysis_dialog,width=410,height=50,bg=WHITE,highlightthickness=0);canvas.pack()
         self.analysis_message=tk.StringVar(value='기초 회귀계수를 추정하고 있습니다.')
         tk.Label(self.analysis_dialog,textvariable=self.analysis_message,font=(KO,10),fg=INK,bg=WHITE).pack(pady=4)
-        self.analysis_progress=ttk.Progressbar(self.analysis_dialog,maximum=2121,length=410);self.analysis_progress.pack(pady=8)
+        self.analysis_progress=ttk.Progressbar(self.analysis_dialog,maximum=21*len(SCALES),length=410);self.analysis_progress.pack(pady=8)
         self.analysis_tick=0
         def animate():
             if not self.busy or not self.analysis_dialog.winfo_exists():return
@@ -329,6 +335,8 @@ class App:
         return None if choice=='All Ship Types' else choice
 
     def update_diagnostics(self):
+        target=self.reg_target.get()
+        self.target_description.set(target+' ('+TARGET_NAMES.get(target,'Weight Model')+')')
         if not self.bundle:return
         import math
         cls=self.selected_type()
@@ -366,7 +374,7 @@ class App:
         if not m.get('year_by_type'):
             self.search_note.set('선택 계열은 연도 항이 없어 비율 탐색 대상이 아닙니다. 100계열은 함종별 규모 지수 αt를 사용합니다.');self.draw_search_graph();return
         info=m.get('selection',{});q=m.get('year_scale',1)
-        self.search_note.set(f"{m.get('candidate_label','기존 식')} / 선택 {q*100:.0f}% / 실적함 Train MAPE 최소 / 유효 실적함 {m['n']}척 전체 사용.\n탐색 범위 0~100% · 1% 간격. 각 후보에서 나머지 계수와 C를 재추정합니다. 함종 필터와 관계없이 계열 전체에서 선택합니다.")
+        self.search_note.set(f"{m.get('candidate_label','기존 식')} / 선택 {q*100:.0f}% / 실적함 Train MAPE 최소 / 유효 실적함 {m['n']}척 전체 사용.\n탐색 범위 0~200% · 1% 간격. 각 후보에서 나머지 계수와 C를 재추정합니다. 함종 필터와 관계없이 계열 전체에서 선택합니다.")
         def fmt(v):return '—' if v is None else f'{float(v):,.3f}'
         chosen_item=None
         for r in m.get('year_search',[]):
@@ -390,8 +398,8 @@ class App:
         for key,color in [('train_mape',TEAL)]:
             points=[]
             for r in sorted(rows,key=lambda v:v['percent']):
-                x=left+r['percent']/100*(right-left)
-                if r['percent']%10==0:c.create_text(x,bottom+14,text=str(r['percent'])+'%',font=(EN,9),fill=MUTED)
+                x=left+r['percent']/MAX_PERCENT*(right-left)
+                if r['percent']%20==0:c.create_text(x,bottom+14,text=str(r['percent'])+'%',font=(EN,9),fill=MUTED)
                 if r.get(key) is None:continue
                 y=bottom-r[key]/ceiling*(bottom-top);points.extend([x,y]);c.create_oval(x-3,y-3,x+3,y+3,fill=color,outline='')
             if len(points)>=4:c.create_line(*points,fill=color,width=2)
@@ -475,7 +483,7 @@ class App:
     def fit(self):
         p=self.choose()
         if not p:return
-        self.busy=True; self.status.set('TRAINING  |  0%~100% (1% 간격) 후보 재학습·실적함 적합도 비교 중…')
+        self.busy=True; self.status.set('TRAINING  |  0%~200% (1% 간격) 후보 재학습·실적함 적합도 비교 중…')
         state={};updates=queue.Queue();self.show_analysis()
         def report(done,total,message):updates.put((done,total,message))
         def worker():

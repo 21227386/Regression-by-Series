@@ -1,6 +1,7 @@
 """Full-fleet training-MAPE selection of year-effect scales."""
 import numpy as np
-SCALES=tuple(i/100 for i in range(0,101))
+MAX_PERCENT=200
+SCALES=tuple(i/100 for i in range(MAX_PERCENT+1))
 
 def metrics(actual,predicted):
     if not np.isfinite(predicted).all() or (predicted<=0).any():raise ValueError('유효하지 않은 예측값')
