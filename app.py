@@ -207,7 +207,7 @@ class App:
         max_weight=max(actual+predicted)*1.05 or 1
         max_error=max(max(abs(e) for e in errors)*1.15,1)
         for side in range(2):
-            left=62+side*w/2;right=(side+1)*w/2-25;top=46;bottom=h-48
+            left=80+side*w/2;right=(side+1)*w/2-25;top=46;bottom=h-48
             c.create_text((left+right)/2,18,text='ACTUAL vs PREDICTED' if side==0 else 'RELATIVE ERROR vs PREDICTED',font=(EN,12,'bold'),fill=INK)
             c.create_line(left,top,left,bottom,right,bottom,fill=MUTED)
             for j in range(5):
@@ -216,7 +216,7 @@ class App:
                 c.create_text(left-7,y,anchor='e',text=f'{max_weight*f:.3g}' if side==0 else f'{(2*f-1)*max_error:.2g}',font=(EN,9),fill=MUTED)
                 c.create_text(x,bottom+12,text=f'{max_weight*f:.3g}',font=(EN,9),fill=MUTED)
             c.create_text((left+right)/2,h-12,text='Actual (tonne)' if side==0 else 'Predicted (tonne)',font=(EN,11),fill=INK)
-            c.create_text(left-44,(top+bottom)/2,text='Predicted (t)' if side==0 else 'Error (%)',angle=90,font=(EN,10),fill=INK)
+            c.create_text(left-68,(top+bottom)/2,text='Predicted (t)' if side==0 else 'Error (%)',angle=90,font=(EN,10),fill=INK)
             if side==0:c.create_line(left,bottom,right,top,fill=GOLD,width=2,dash=(5,3))
             else:c.create_line(left,(top+bottom)/2,right,(top+bottom)/2,fill=GOLD,width=2,dash=(5,3))
             for i,d in enumerate(rows):

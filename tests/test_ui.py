@@ -14,7 +14,7 @@ import test_model
 class UITests(unittest.TestCase):
     def test_upload_estimate_export_and_template(self):
         fixture=test_model.ModelTests(); fixture.setUp()
-        root=tk.Tk(); app=App(root); root.update()
+        root=tk.Tk(); app=App(root); root.geometry('1380x900+0+0'); root.update()
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 source=Path(tmp)/'fleet.xlsx'; fixture.df.to_excel(source,index=False)
