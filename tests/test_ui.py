@@ -29,6 +29,9 @@ class UITests(unittest.TestCase):
                 app.estimate();root.update()
                 self.assertIn('tonne',app.sum_value.get())
                 self.assertEqual(len(app.result_tree.get_children()),7)
+                last=app.result_tree.bbox(app.result_tree.get_children()[-1])
+                self.assertTrue(last, 'SWBS700 must be visible')
+                self.assertLessEqual(last[1]+last[3], app.result_tree.winfo_height())
                 output=Path(tmp)/'result.xlsx'
                 with patch.object(app,'choose',return_value=str(output)),patch('app.messagebox.showinfo'):
                     app.report()

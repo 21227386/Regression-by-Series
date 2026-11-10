@@ -26,7 +26,7 @@ class App:
         style.configure('TNotebook', background=BG, borderwidth=0)
         style.configure('TNotebook.Tab', font=(EN, 12, 'bold'), padding=(22, 10), background='#dce6ec')
         style.map('TNotebook.Tab', background=[('selected', WHITE)], foreground=[('selected', TEAL)])
-        style.configure('Treeview', font=(KO, 10), rowheight=29, background=WHITE, fieldbackground=WHITE)
+        style.configure('Treeview', font=(KO, 10), rowheight=23, background=WHITE, fieldbackground=WHITE)
         style.configure('Treeview.Heading', font=(EN, 11, 'bold'), background='#dce7ed', foreground=INK)
         style.configure('TCombobox', padding=6)
         self.header()
@@ -97,7 +97,7 @@ class App:
         self.label(inner, '03  /  REPORTS', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(22,8))
         self.button(inner, 'Export Results to Excel', self.report).pack(fill='x', pady=5)
         self.button(inner, 'Batch Design File Upload', self.forecast).pack(fill='x', pady=5)
-        tk.Label(inner, text='업데이트 학습 안내\n기존 실적함 + 추가 실적함을 합친\n전체 엑셀을 다시 업로드하세요.\n\n초계함·초계정 → 호위함 계수 적용\n중량: tonne / 치수: m\n마력: hp / 전력: kW / 속력: kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=20)
+        tk.Label(inner, text='기존 + 추가 자료를 합쳐 재업로드\n초계함·초계정 → 호위함 계수\n중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=10)
 
     def design_panel(self):
         panel = tk.Frame(self.design_tab, bg=WHITE, padx=20, pady=15); panel.pack(fill='both', expand=True)
@@ -129,7 +129,7 @@ class App:
             tk.Label(card,textvariable=var,font=(EN,25,'bold'),fg=color,bg='#edf4f6').pack(anchor='w')
         lower=tk.Frame(panel,bg=WHITE); lower.pack(fill='both',expand=True)
         self.result_tree=self.table(lower,['SWBS','System / 계열','Weight (tonne)'],[85,230,130]); self.result_tree.pack(side='left',fill='both',expand=True)
-        self.chart=tk.Canvas(lower,bg='#f5f8fa',width=290,height=205,highlightthickness=0); self.chart.pack(side='right',fill='both',expand=True,padx=(12,0))
+        self.chart=tk.Canvas(lower,bg='#f5f8fa',width=290,height=180,highlightthickness=0); self.chart.pack(side='right',fill='both',expand=True,padx=(12,0))
         self.chart.bind('<Configure>',lambda e:self.draw_chart())
         self.last_weights=None
         self.prediction_note=tk.StringVar(value='모델 학습 또는 불러오기 후 예측할 수 있습니다. 학습 적합도는 신규 함정 예측 정확도를 보장하지 않습니다.')
