@@ -8,11 +8,11 @@ from model import BASE, WEIGHTS, TERMS, design, train, predict, read_excel, expo
 class ModelTests(unittest.TestCase):
     def setUp(self):
         rng = np.random.default_rng(42); n = 120
-        self.df = pd.DataFrame({'함분류':['A','B']*(n//2),'취역연도':rng.integers(1980,2025,n),
+        self.df = pd.DataFrame({'함분류':['구축함','호위함']*(n//2),'취역연도':rng.integers(1980,2025,n),
             '길이':rng.uniform(70,180,n),'폭':rng.uniform(10,25,n),'깊이':rng.uniform(6,15,n),
             '소요마력':rng.uniform(10000,80000,n),'소요전력':rng.uniform(1000,12000,n),'순항속력':rng.uniform(12,22,n)})
         for i,terms in TERMS.items():
-            x=design(self.df,terms,['A','B'],self.df['취역연도'].mean())
+            x=design(self.df,terms,['구축함','호위함'],self.df['취역연도'].mean())
             b=np.array([1.2]+[.15 if t=='year' else .65 for t in terms]+[.3])
             self.df[f'SWBS{i}']=np.exp(x@b)
         self.df['총중량']=self.df[WEIGHTS].sum(axis=1)
@@ -35,8 +35,38 @@ class ModelTests(unittest.TestCase):
         for c in WEIGHTS:
             np.testing.assert_allclose(out[c+'_예측_tonne'],self.df.iloc[100:][c],rtol=1e-9)
     def test_unseen_class(self):
-        b=train(self.df); data=self.df.iloc[:1].copy(); data['함분류']='NEW'
+        b=train(self.df); data=self.df.iloc[:1].copy(); data['함분류']='지원함'
         with self.assertRaisesRegex(ValueError,'학습되지'): predict(data,b)
+    def test_patrol_predictions_equal_frigate(self):
+        bundle=train(self.df)
+        data=pd.concat([self.df.iloc[[0]]]*3,ignore_index=True)
+        data['함분류']=['호위함','초계함','초계정']
+        out=predict(data,bundle)
+        self.assertEqual(out['함분류'].tolist(),['호위함']*3)
+        self.assertEqual(out['함분류_입력'].tolist(),['호위함','초계함','초계정'])
+        for c in WEIGHTS:
+            np.testing.assert_allclose(out[c+'_예측_tonne'],out[c+'_예측_tonne'].iloc[0])
+    def test_patrol_training_pooled(self):
+        expected=train(self.df)
+        data=self.df.copy()
+        data.loc[data.index % 4 == 1,'함분류']='초계함'
+        data.loc[data.index % 4 == 3,'함분류']='초계정'
+        actual=train(data)
+        for c in WEIGHTS:
+            self.assertEqual(actual['models'][c]['classes'],['구축함','호위함'])
+            np.testing.assert_allclose(actual['models'][c]['coef'],expected['models'][c]['coef'])
+    def test_invalid_type(self):
+        self.df.loc[0,'함분류']='미지정함'
+        with self.assertRaisesRegex(ValueError,'지원하지 않는 함종'): train(self.df)
+    def test_six_types(self):
+        from model import SHIP_TYPES
+        data=self.df.copy(); data['함분류']=SHIP_TYPES*20
+        bundle=train(data)
+        self.assertEqual(set(bundle['models']['SWBS100']['classes']),set(SHIP_TYPES))
+    def test_old_alias_model_rejected(self):
+        bundle=train(self.df)
+        bundle['models']['SWBS100']['classes']=['구축함','초계함']
+        with self.assertRaisesRegex(ValueError,'다시 학습'): predict(self.df,bundle)
     def test_rank_deficient(self):
         self.df['취역연도']=2000
         with self.assertRaisesRegex(ValueError,'식별'): train(self.df)

@@ -1,7 +1,7 @@
 import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-from model import read_excel, train, predict, export, template, coefficients
+from model import read_excel, train, predict, export, template, coefficients, validate_model_types
 
 class App:
     def __init__(self, root):
@@ -22,6 +22,8 @@ class App:
                   '2. 엑셀 학습으로 SWBS별 계수를 추정하세요. 모든 SWBS 중량은 양수여야 합니다.\n'
                   '3. 신규 함정 예측에서는 함분류·취역연도·치수·출력·속력만 입력하면 됩니다.\n'
                   '4. 결과 엑셀과 모델 JSON을 저장하세요.\n\n'
+                  '함종: 구축함·호위함·고속함·상륙함·기뢰전함·지원함\n'
+                  '초계함·초계정은 호위함으로 통합하여 같은 Dt를 적용합니다.\n'
                   '총중량 기본값은 SWBS100~700 예측 합계입니다.\n'
                   '선택 총중량 독립회귀는 K(LBD)^α Dt exp[γ(Y−평균연도)/10] 모형입니다.\n'
                   '순항속력은 제공식에 없어 회귀에서 제외됩니다.\n'
@@ -60,8 +62,9 @@ class App:
         p = self.choose(False, '.json')
         if not p: return
         with open(p,encoding='utf-8') as f: b = json.load(f)
-        if b.get('version') != 1 or not all('SWBS'+str(i) in b.get('models',{}) for i in range(100,800,100)):
+        if b.get('version') not in (1, 2) or not all('SWBS'+str(i) in b.get('models',{}) for i in range(100,800,100)):
             raise ValueError('지원하지 않는 모델 파일입니다.')
+        validate_model_types(b)
         self.bundle, self.data = b, None
         self.show('모델을 불러왔습니다. 신규 함정 예측을 실행하세요.\n\n'+coefficients(b).to_string(index=False))
     def forecast(self):

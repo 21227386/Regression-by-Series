@@ -11,6 +11,29 @@ TERMS = {100: ['LBD'], 200: ['P', 'year'], 300: ['PE', 'L', 'year'],
 ALIASES = {'총 중량': '총중량', '충중량': '총중량', '취취역연도': '취역연도',
            '함정분류': '함분류', '함종': '함분류'}
 
+SHIP_TYPES = ['구축함', '호위함', '고속함', '상륙함', '기뢰전함', '지원함']
+SHIP_ALIASES = {'초계함': '호위함', '초계정': '호위함'}
+
+def normalize_types(df):
+    out = df.copy()
+    if out['함분류'].isna().any():
+        raise ValueError('함분류에 빈 값이 있습니다.')
+    original = out['함분류'].astype(str).str.strip()
+    normalized = original.replace(SHIP_ALIASES)
+    invalid = sorted(set(normalized) - set(SHIP_TYPES))
+    if invalid:
+        raise ValueError('지원하지 않는 함종: ' + ', '.join(invalid) +
+                         '. 허용 함종: ' + ', '.join(SHIP_TYPES) + ' (초계함·초계정은 호위함 적용)')
+    if '함분류_입력' not in out:
+        out['함분류_입력'] = original
+    out['함분류'] = normalized
+    return out
+
+def validate_model_types(bundle):
+    for model in bundle['models'].values():
+        if any(c not in SHIP_TYPES for c in model['classes']):
+            raise ValueError('이전 모델의 함종 체계가 다릅니다. 새 프로그램에서 원본 엑셀로 다시 학습하세요.')
+
 def read_excel(path, training=True):
     df = pd.read_excel(path, engine='openpyxl')
     names = [str(c).strip().replace(' ', '') for c in df.columns]
@@ -25,7 +48,7 @@ def read_excel(path, training=True):
         raise ValueError('데이터가 없습니다.')
     if df['함분류'].isna().any() or (df['함분류'].astype(str).str.strip() == '').any():
         raise ValueError('함분류에 빈 값이 있습니다.')
-    df['함분류'] = df['함분류'].astype(str).str.strip()
+    df = normalize_types(df)
     numeric = BASE[1:] + (WEIGHTS if training else [])
     if training and '총중량' in df:
         numeric += ['총중량']
@@ -82,6 +105,7 @@ def predict_one(df, model):
         return np.exp(x @ np.asarray(model['coef'])) * model['smearing']
 
 def train(df):
+    df = normalize_types(df)
     models = {f'SWBS{i}': fit_one(df, f'SWBS{i}', terms) for i, terms in TERMS.items()}
     warnings = []
     if '총중량' in df:
@@ -93,9 +117,11 @@ def train(df):
             models['총중량_독립회귀'] = fit_one(df, '총중량', ['LBD', 'year'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
-    return {'version': 1, 'models': models, 'warnings': warnings}
+    return {'version': 2, 'models': models, 'warnings': warnings}
 
 def predict(df, bundle):
+    validate_model_types(bundle)
+    df = normalize_types(df)
     out = df.copy()
     for name, model in bundle['models'].items():
         out[name + '_예측_tonne'] = predict_one(df, model)
@@ -134,5 +160,7 @@ def export(path, df, bundle):
 def template(path):
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
         pd.DataFrame(columns=BASE + WEIGHTS + ['총중량']).to_excel(writer, sheet_name='데이터', index=False)
+        pd.DataFrame({'함종': SHIP_TYPES + ['초계함', '초계정'],
+                      '적용 함종': SHIP_TYPES + ['호위함', '호위함']}).to_excel(writer, sheet_name='함종 안내', index=False)
         pd.DataFrame({'열': BASE + WEIGHTS + ['총중량'],
                       '단위': ['문자','년','m','m','m','hp','kW','kn'] + ['tonne'] * 8}).to_excel(writer, sheet_name='단위', index=False)
