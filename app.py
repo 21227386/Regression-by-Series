@@ -40,7 +40,7 @@ class App:
         self.notebook = ttk.Notebook(content); self.notebook.pack(fill='both', expand=True)
         self.design_tab = tk.Frame(self.notebook, bg=WHITE)
         self.model_tab = tk.Frame(self.notebook, bg=WHITE)
-        self.notebook.add(self.design_tab, text='Design & Weight Estimation')
+        self.notebook.add(self.design_tab, text='Weight Estimation')
         self.notebook.add(self.model_tab, text='Regression Results')
         self.design_panel(); self.model_panel()
 
@@ -84,31 +84,34 @@ class App:
 
     def sidebar(self, p):
         inner = tk.Frame(p, bg=NAVY, padx=18, pady=14); inner.pack(fill='both', expand=True)
-        self.label(inner, '01  /  REFERENCE FLEET', 13, GOLD, NAVY, True, True).pack(anchor='w')
-        self.label(inner, '실적함 데이터 · 자동 회귀 학습', 10, '#d2e1e8', NAVY).pack(anchor='w', pady=(6,12))
-        self.button(inner, 'Download Input File Template', self.make_template).pack(fill='x', pady=5)
-        self.button(inner, 'Input File Upload', self.fit, True).pack(fill='x', pady=5)
+        self.label(inner, '1  /  Reference Fleet', 13, GOLD, NAVY, True, True).pack(anchor='w')
+        self.label(inner, '실적함 데이터 · 자동 회귀 학습', 10, '#d2e1e8', NAVY).pack(anchor='w', pady=(6,8))
+        self.button(inner, 'Download Input File Template', self.make_template).pack(fill='x', pady=3)
+        self.button(inner, 'Input File Upload', self.fit, True).pack(fill='x', pady=3)
         self.fleet_info = tk.StringVar(value='아직 학습된 모델이 없습니다.')
         tk.Label(inner, textvariable=self.fleet_info, wraplength=245, justify='left', bg=NAVY, fg='#b8cdd8', font=(KO,10)).pack(anchor='w', pady=5)
-        self.label(inner, '02  /  REGRESSION', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
+        self.label(inner, '2  /  Regression', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'View All Results', self.open_regression).pack(fill='x', pady=3)
         self.button(inner, 'View Ship Types Results', self.open_ship_types).pack(fill='x', pady=3)
-        self.label(inner, '03  /  MODEL LIBRARY', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
-        self.button(inner, 'Save Regression Model', self.save).pack(fill='x', pady=5)
-        self.button(inner, 'Load Regression Model', self.load).pack(fill='x', pady=5)
-        self.label(inner, '04  /  REPORTS', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
-        self.button(inner, 'Export Results to Excel', self.report).pack(fill='x', pady=5)
-        tk.Label(inner, text='기존 + 추가 자료를 합쳐 재업로드\n초계함·초계정 → 호위함 계수\n중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=10)
+        self.button(inner, 'Equations & Coefficient Guide', self.open_guide).pack(fill='x', pady=3)
+        self.button(inner, 'Save Regression Model', self.save).pack(fill='x', pady=3)
+        self.button(inner, 'Load Regression Model', self.load).pack(fill='x', pady=3)
+        self.label(inner, '3  /  Weight Estimation', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
+        self.button(inner, 'Open Weight Estimation', self.open_estimation, True).pack(fill='x', pady=3)
+        self.label(inner, '4  /  Reports', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
+        self.button(inner, 'Export Results to Excel', self.report).pack(fill='x', pady=3)
+        tk.Label(inner, text='기존 + 추가 자료를 합쳐 재업로드\n초계함·초계정 → 호위함 계수\n중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=5)
 
     def design_panel(self):
         panel = tk.Frame(self.design_tab, bg=WHITE, padx=20, pady=15); panel.pack(fill='both', expand=True)
-        self.label(panel, 'New Ship Design', 21, bold=True, english=True).pack(anchor='w')
-        self.label(panel, '설계 제원을 입력하면 학습된 계수로 경하중량과 계열별 중량을 추정합니다.', 10, MUTED).pack(anchor='w', pady=(3,12))
+        self.label(panel, 'Weight Estimation', 21, bold=True, english=True).pack(anchor='w')
+        self.label(panel, '함종·길이·폭·깊이·소요마력·소요전력으로 SWBS100~700 및 경하중량을 추정합니다.', 10, MUTED).pack(anchor='w', pady=(3,12))
         form = tk.Frame(panel, bg=WHITE); form.pack(fill='x')
         self.inputs = {}
-        fields = [('함분류','Ship Type / 함종'), ('취역연도','Commissioning Year / 취역연도'),
-                  ('길이','Length L / 길이 (m)'), ('폭','Beam B / 폭 (m)'), ('깊이','Depth D / 깊이 (m)'),
-                  ('소요마력','Propulsion Power / 소요마력 (hp)'), ('소요전력','Electrical Power / 소요전력 (kW)'), ('순항속력','Cruising Speed / 순항속력 (kn)')]
+        fields = [('함분류','Ship Type / 함종'), ('길이','Length L / 길이 (m)'),
+                  ('폭','Beam B / 폭 (m)'), ('깊이','Depth D / 깊이 (m)'),
+                  ('소요마력','Propulsion Power / 소요마력 (hp)'), ('소요전력','Electrical Power / 소요전력 (kW)'),
+                  ('취역연도','Commissioning Year / 취역연도 (선택)')]
         for i, (key, caption) in enumerate(fields):
             cell = tk.Frame(form, bg=WHITE); cell.grid(row=i//4,column=i%4,sticky='ew',padx=(0,12),pady=6)
             form.columnconfigure(i%4, weight=1)
@@ -121,7 +124,8 @@ class App:
             e.pack(fill='x',ipady=4,pady=(4,0))
         row = tk.Frame(panel,bg=WHITE); row.pack(fill='x',pady=(10,4))
         self.estimate_button=self.button(row,'Estimate Ship Weight',self.estimate,True); self.estimate_button.pack(side='left')
-        self.label(row,'속력은 기록용 입력이며 현재 회귀식에는 사용되지 않습니다.',9,MUTED).pack(side='left',padx=14)
+        self.estimation_assumption=tk.StringVar(value='취역연도 미입력 시 학습 평균연도를 적용합니다. 순항속력은 현재 식에 사용하지 않습니다.')
+        tk.Label(row,textvariable=self.estimation_assumption,font=(KO,9),fg=MUTED,bg=WHITE,wraplength=600,justify='left').pack(side='left',padx=14)
         cards=tk.Frame(panel,bg=WHITE); cards.pack(fill='x',pady=12)
         self.sum_value=tk.StringVar(value='—'); self.total_value=tk.StringVar(value='—')
         for title,var,color in [('Series Sum / 계열 합산 중량',self.sum_value,TEAL),('Direct Regression / 경하중량 직접 회귀',self.total_value,INK)]:
@@ -140,6 +144,12 @@ class App:
         tree=ttk.Treeview(parent,columns=cols,show='headings',height=7)
         for c,w in zip(cols,widths): tree.heading(c,text=c); tree.column(c,width=w,minwidth=60,anchor='w' if c==cols[1] else 'center')
         return tree
+
+    def open_estimation(self):
+        self.notebook.select(self.design_tab)
+
+    def open_guide(self):
+        self.notebook.select(self.model_tab);self.reg_tabs.select(self.guide_tab)
 
     def open_regression(self):
         self.ship_filter.set('All Ship Types');self.type_selector.configure(state='disabled')
@@ -186,6 +196,8 @@ class App:
         overview=tk.Frame(tabs,bg=WHITE);coefs=tk.Frame(tabs,bg=WHITE);ships=tk.Frame(tabs,bg=WHITE)
         stats=tk.Frame(tabs,bg=WHITE);notes=tk.Frame(tabs,bg=WHITE)
         for frame,title in [(overview,'Graphs'),(coefs,'Coefficients'),(ships,'Ship Diagnostics'),(stats,'Fit Statistics'),(notes,'Notes')]:tabs.add(frame,text=title)
+        self.guide_tab=tk.Frame(tabs,bg=WHITE);tabs.add(self.guide_tab,text='Equations & Guide')
+        self.build_guide(self.guide_tab)
         self.reg_graph=tk.Canvas(overview,bg='#f3f7fa',height=320,highlightthickness=0)
         # Pack the graph after its information footer so hover details remain visible.
         self.reg_graph.bind('<Configure>',lambda e:self.draw_regression_graphs())
@@ -205,6 +217,54 @@ class App:
         sy=ttk.Scrollbar(notes,orient='vertical',command=self.log.yview);self.log.configure(yscrollcommand=sy.set)
         sy.pack(side='right',fill='y');self.log.pack(fill='both',expand=True)
         self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계함·초계정의 호위함 통합 후 척수가 가장 많은 함종입니다.\n동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
+
+    def build_guide(self,parent):
+        text=tk.Text(parent,wrap='word',font=(KO,11),bg='#f3f7fa',fg=INK,relief='flat',padx=20,pady=16)
+        sy=ttk.Scrollbar(parent,orient='vertical',command=text.yview);text.configure(yscrollcommand=sy.set)
+        sy.pack(side='right',fill='y');text.pack(fill='both',expand=True)
+        text.tag_configure('title',font=(EN,18,'bold'),foreground=TEAL,spacing1=10,spacing3=10)
+        text.tag_configure('equation',font=(EN,14,'bold'),foreground=INK,spacing1=5,spacing3=10)
+        def put(value,tag=None):text.insert('end',value+'\n',tag)
+        put('Regression Equations & Coefficient Guide','title')
+        put('계열별 회귀식 — 모든 중량의 단위는 tonne입니다.')
+        for equation in [
+            'W100 = K (LBD)^α Dt C',
+            'W200 = K P^α Dt F(Y) C',
+            'W300 = K PE^α L^β Dt F(Y) C',
+            'W400 = K Dt F(Y) C',
+            'W500 = K (LBD)^α PE^β Dt F(Y) C',
+            'W600 = K (LB)^α Dt C',
+            'W700 = K Dt F(Y) C']:
+            put(equation,'equation')
+        put('Total / 경하중량','title')
+        put('Wsum = W100 + W200 + W300 + W400 + W500 + W600 + W700','equation')
+        put('Wtotal = K (LBD)^α P^β Dt F(Y) C','equation')
+        put('Wsum은 계열별 예측 합계이고, Wtotal은 실제 경하중량을 학습한 별도 직접 회귀값입니다. 두 값은 일치하도록 강제하지 않습니다. SWBS 합계의 포함 범위가 경하중량과 같은지 확인하세요.')
+        put('Year Adjustment / 취역연도 보정','title')
+        put('F(Y) = exp[γ (Y − Ȳ) / 10]','equation')
+        put('Y: 입력 취역연도, Ȳ: 해당 모형의 학습 평균 취역연도. 연도 입력을 생략하면 학습 평균연도에서 예측하며 F(Y)=1입니다. 미래 연도로 추정하려면 선택 입력란에 연도를 넣으세요.')
+        put('Definitions / 변수·계수의 의미','title')
+        for line in [
+            'K : 계열별 기본 중량계수. 총중량 직접 회귀에도 별도 K가 있습니다.',
+            'α, β : 설계변수의 회귀지수. 변수의 증가에 대한 중량 변화의 크기를 나타냅니다.',
+            'γ : 취역연도 영향계수. 연도가 10년 증가할 때 연도 효과는 exp(γ)배입니다.',
+            'Dt : 함종별 설계계수. 각 계열 및 총중량 모형마다 별도로 추정하는 상대 배율입니다.',
+            'C : 역변환 편향 보정계수. 로그 잔차 e의 exp(e) 평균이며 K와 분리하여 적용합니다.',
+            'L, B, D : 길이·폭·깊이(m). P : 소요마력(hp). PE : 소요전력(kW).',
+            '함유형·순번은 기록과 추적에 사용합니다. 순항속력은 현재 회귀식에 사용하지 않습니다.']:
+            put(line)
+        put('Reading the Coefficients Table / 표 읽는 방법','title')
+        put('같은 계열에서는 K·회귀지수·C·기준연도가 공통이고 Dt가 함종마다 다릅니다. 그래서 Coefficients 표에는 공통 계수가 여러 행에 반복됩니다.')
+        put('기준함종은 오류 행을 제외하고 초계함·초계정을 호위함으로 통합한 뒤 척수가 가장 많은 함종이며 Dt=1입니다. 동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.')
+        put('예: SWBS100에서 구축함 Dt=1.25이면 L·B·D가 같을 때 기준함종보다 선체구조 중량을 25% 크게 추정합니다. 실제 함정 크기가 다르면 이 배율만으로 총중량을 비교할 수 없습니다.')
+        put('SWBS200의 Dt는 추진계통용이고, 총중량 모형의 Dt는 경하중량용입니다. Ship Diagnostics의 Dt는 선택한 모형에서 그 함정에 적용한 같은 값입니다. 척별 독립 Dt를 추가로 추정하지 않습니다.')
+        put('Diagnostics / 적합도와 함정별 오차','title')
+        put('잔차 = 실제−예측 / 오차율 = (예측−실제)/실제 × 100. R²·RMSE·MAPE와 그래프는 학습자료 적합도이며 새로운 함급에 대한 검증 성능이 아닙니다.')
+        put('함종별 보기는 전체 모형의 계수로 선택 함종의 적합도를 계산합니다. 해당 함종만 별도 재학습하지 않습니다. 계수 수와 조건수는 전체 모형의 값입니다.')
+        put('Ship Diagnostics는 절대 오차율이 큰 순서입니다. 그래프의 순번과 연계하여 차이가 큰 함정을 확인하세요.')
+        put('Model & Workflow / 사용 순서','title')
+        put('1 Reference Fleet: 전체 실적함 엑셀 업로드 → 2 Regression: 회귀 결과·수식 확인, 엑셀 모델 저장/불러오기 → 3 Weight Estimation: 신규 함정의 제원 입력 및 중량 예측 → 4 Reports: 결과 엑셀 저장.')
+        text.configure(state='disabled');self.guide_text=text
 
     def selected_type(self):
         choice=self.ship_filter.get()
@@ -345,6 +405,7 @@ class App:
     def refresh_model(self,source):
         import math
         m=self.bundle['models']['SWBS100'];ref=m['classes'][0]
+        self.estimation_assumption.set(f"취역연도 미입력 시 학습 평균 {m['mean_year']:.2f}년을 적용합니다. 순항속력은 식에 사용하지 않습니다.")
         self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
         self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 함종입니다. C는 K와 별도 적용합니다.")
         self.reg_selector.configure(values=list(self.bundle['models']))
@@ -374,12 +435,18 @@ class App:
         row={}
         for key,var in self.inputs.items():
             if key=='함분류':row[key]=var.get();continue
+            if key=='취역연도' and not var.get().strip():
+                self.require()
+                row[key]=float(self.bundle['models']['SWBS100']['mean_year'])
+                row['연도 적용']='학습 평균연도'
+                continue
             try:value=float(var.get().replace(',','').strip())
             except ValueError:raise ValueError(f'{key}: 숫자를 입력하세요.')
             import math
             if not math.isfinite(value) or (key!='취역연도' and value<=0):raise ValueError(f'{key}: 유효한 양수를 입력하세요.')
             if key=='취역연도' and (not 1800<=value<=2200 or value%1):raise ValueError('취역연도는 1800~2200의 정수여야 합니다.')
             row[key]=value
+        if '연도 적용' not in row:row['연도 적용']='사용자 입력연도'
         return normalize_types(pd.DataFrame([row]))
     def estimate(self):
         self.require();data=self.design_data();result=predict(data,self.bundle)
@@ -391,7 +458,7 @@ class App:
         self.last_weights=[float(row[f'SWBS{i}_예측_tonne']) for i in range(100,800,100)]
         self.result_tree.delete(*self.result_tree.get_children())
         for i,(name,w) in enumerate(zip(SERIES,self.last_weights)):self.result_tree.insert('','end',values=(str((i+1)*100),name,f'{w:,.2f}'))
-        note=f"적용 함종: {row['함분류']}  |  "+(row['주의'] or '학습자료의 입력 범위 내')
+        note=f"함종: {row['함분류']} / 연도: {row['취역연도']:.2f} ({row.get('연도 적용','입력연도')})  |  "+(row['주의'] or '학습자료의 입력 범위 내')
         if key not in row:note+='  |  실제 총중량을 포함한 실적함 자료를 학습하면 직접 회귀를 사용할 수 있습니다.'
         self.prediction_note.set(note);self.draw_chart()
     def report(self):
