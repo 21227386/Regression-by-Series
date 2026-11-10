@@ -95,7 +95,7 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(len(loaded),119)
             self.assertIn('SWBS100',loaded.attrs['excluded_rows'][0]['제외 사유'])
     def test_unit_headers_width_and_exclusions(self):
-        from model import HEADERS, template
+        from model import HEADERS, INPUT_COLUMNS, template
         from openpyxl import load_workbook
         data=self.df.copy()
         data.loc[2,'길이']=np.nan
@@ -105,7 +105,7 @@ class ModelTests(unittest.TestCase):
             p=Path(tmp)/'units.xlsx'
             template(p)
             wb=load_workbook(p)
-            self.assertEqual([c.value for c in wb['데이터'][1]],[HEADERS[c] for c in ['순번']+BASE+WEIGHTS+['총중량']])
+            self.assertEqual([c.value for c in wb['데이터'][1]],[HEADERS[c] for c in INPUT_COLUMNS])
             for ws in wb:
                 for dim in ws.column_dimensions.values():self.assertEqual(dim.width,10)
                 for cell in ws[1]:
@@ -204,6 +204,21 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(len(checked),116)
             self.assertEqual(checked['순번'].iloc[0],'005')
             self.assertEqual([r['엑셀 행'] for r in checked.attrs['excluded_rows']],[2,3,4,5])
+    def test_new_subtype_and_year_header(self):
+        from model import HEADERS, save_model_excel, load_model_excel
+        data=self.df.copy();data.insert(1,'함유형','DDG')
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'subtype.xlsx';data.rename(columns=HEADERS).to_excel(p,index=False)
+            loaded=read_excel(p)
+            self.assertEqual(loaded['함유형'].iloc[0],'DDG')
+            model=train(loaded)
+            self.assertEqual(model['models']['SWBS100']['diagnostics'][0]['함유형'],'DDG')
+            save_model_excel(p,model)
+            self.assertEqual(load_model_excel(p)['models']['SWBS100']['diagnostics'][0]['함유형'],'DDG')
+            np.testing.assert_allclose(model['models']['SWBS100']['coef'],train(self.df)['models']['SWBS100']['coef'])
+            data.loc[0,'함유형']='?';data.loc[1,'함유형']=' '
+            data.rename(columns=HEADERS).to_excel(p,index=False)
+            self.assertEqual(len(read_excel(p)),118)
     def test_insufficient(self):
         with self.assertRaisesRegex(ValueError,'부족'): train(self.df.iloc[:3])
 

@@ -198,7 +198,7 @@ class App:
         cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','γ','기준연도']
         self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100])
         self.ship_diagnostics_tab=ships
-        self.ship_tree=self.scroll_table(ships,['Ship No.','Excel Row','Ship Type','Dt','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,80,90,85,120,120,120,100])
+        self.ship_tree=self.scroll_table(ships,['Ship No.','Excel Row','Ship Type','Subtype','Dt','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,80,90,100,85,120,120,120,100])
         self.ship_tree.tag_configure('large_error',foreground='#ae4437')
         self.metric_tree=self.scroll_table(stats,['Target','Ships','RMSE (tonne)','MAPE (%)','R²','Parameters','Condition'],[180,65,135,100,100,90,120])
         self.log=tk.Text(notes,wrap='word',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
@@ -224,7 +224,7 @@ class App:
         self.reg_stats.set(f"N {metric['n']}   R² {fmt(metric['r2'],4)}   RMSE {fmt(metric['rmse_tonne'],2)} t   MAPE {fmt(metric['mape_percent'],2)}%")
         self.ship_tree.delete(*self.ship_tree.get_children());self.ship_row_ids={}
         for d in sorted(rows,key=lambda r:abs(r['오차율(%)']),reverse=True):
-            item=self.ship_tree.insert('','end',values=(d.get('순번',str(int(d['엑셀 행'])-1)),d['엑셀 행'],d['함종'],f"{d['Dt']:.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"),tags=('large_error',) if abs(d['오차율(%)'])>=20 else ())
+            item=self.ship_tree.insert('','end',values=(d.get('순번',str(int(d['엑셀 행'])-1)),d['엑셀 행'],d['함종'],d.get('함유형',''),f"{d['Dt']:.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"),tags=('large_error',) if abs(d['오차율(%)'])>=20 else ())
             self.ship_row_ids[str(d.get('순번',str(int(d['엑셀 행'])-1)))]=item
         self.metric_tree.delete(*self.metric_tree.get_children());self.coeff_tree.delete(*self.coeff_tree.get_children())
         for name,x in self.bundle['models'].items():
@@ -281,7 +281,7 @@ class App:
                 items=[point]
                 if self.show_ship_ids.get():
                     items.append(c.create_text(x+4,y-6,text=number,anchor='sw',font=(EN,8),fill=color,tags=('ship_number',)))
-                message=f"순번 {number} / Excel {d['엑셀 행']}행 / {d['함종']} / Dt {d['Dt']:.5g} / 실제 {d['실제중량']:,.2f} t / 예측 {d['예측중량']:,.2f} t / 오차 {d['오차율(%)']:.2f}%"
+                message=f"순번 {number} / Excel {d['엑셀 행']}행 / {d['함종']} / {d.get('함유형','')} / Dt {d['Dt']:.5g} / 실제 {d['실제중량']:,.2f} t / 예측 {d['예측중량']:,.2f} t / 오차 {d['오차율(%)']:.2f}%"
                 for item in items:
                     c.tag_bind(item,'<Enter>',lambda e,t=message:self.graph_hover.set(t))
                     c.tag_bind(item,'<Button-1>',lambda e,n=number,t=message:self.select_graph_ship(n,t))

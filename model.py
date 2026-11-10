@@ -6,8 +6,10 @@ import pandas as pd
 
 BASE = ['함분류', '취역연도', '길이', '폭', '깊이', '소요마력', '소요전력', '순항속력']
 WEIGHTS = [f'SWBS{i}' for i in range(100, 800, 100)]
-HEADERS = dict(zip(BASE + WEIGHTS + ['총중량'], ['함종', '취역연도 (년)', '길이(m)', '폭(m)', '깊이(m)', '소요마력(hp)', '소요전력(kW)', '순항속력(kn)'] + [f'{c}(tonne)' for c in WEIGHTS] + ['총중량(tonne)']))
+HEADERS = dict(zip(BASE + WEIGHTS + ['총중량'], ['함종', '취역연도(year)', '길이(m)', '폭(m)', '깊이(m)', '소요마력(hp)', '소요전력(kW)', '순항속력(kn)'] + [f'{c}(tonne)' for c in WEIGHTS] + ['총중량(tonne)']))
 HEADERS['순번'] = '순번'
+HEADERS['함유형'] = '함유형'
+INPUT_COLUMNS = ['순번', '함분류', '함유형'] + BASE[1:] + WEIGHTS + ['총중량']
 # The supplied equations determine these terms; cruising speed is deliberately unused.
 TERMS = {100: ['LBD'], 200: ['P', 'year'], 300: ['PE', 'L', 'year'],
          400: ['year'], 500: ['LBD', 'PE', 'year'], 600: ['LB'], 700: ['year']}
@@ -39,13 +41,14 @@ def validate_model_types(bundle):
 
 def read_excel(path, training=True):
     df = pd.read_excel(path, engine='openpyxl', dtype=object)
-    names = [re.sub(r'\((?:년|m|hp|kw|kn|tonne|ton)\)$', '', re.sub(r'\s+', '', str(c)), flags=re.IGNORECASE) for c in df.columns]
+    names = [re.sub(r'\((?:년|year|m|hp|kw|kn|tonne|ton)\)$', '', re.sub(r'\s+', '', str(c)), flags=re.IGNORECASE) for c in df.columns]
     df.columns = [ALIASES.get(c, c) for c in names]
     if df.columns.duplicated().any():
         raise ValueError('중복된 열 이름이 있습니다.')
     serial_auto = '순번' not in df
     if serial_auto: df.insert(0, '순번', [str(i+1) for i in range(len(df))])
     required = ['순번'] + BASE + (WEIGHTS + ['총중량'] if training else [])
+    if '함유형' in df: required.append('함유형')
     missing = [c for c in required if c not in df]
     if missing:
         raise ValueError('필수 열 누락: ' + ', '.join(missing))
@@ -68,6 +71,10 @@ def read_excel(path, training=True):
             for idx in df.index[invalid_ids]: reasons[idx].append('순번: 유효한 식별번호 필요')
             for idx in df.index[duplicate]: reasons[idx].append('순번: 중복된 식별번호')
             df[c] = ids
+        elif c == '함유형':
+            values = df[c].astype(str).str.strip()
+            for idx in df.index[~blank & values.str.contains('?', regex=False)]: reasons[idx].append('함유형: 유효한 분류명 필요')
+            df[c] = values
         elif c == '함분류':
             types = df[c].astype(str).str.strip().replace(SHIP_ALIASES)
             bad = ~blank & ~types.isin(SHIP_TYPES)
@@ -129,7 +136,7 @@ def fit_one(df, target, terms):
     return {'target': target, 'terms': terms, 'classes': classes, 'mean_year': mean_year,
             'coef': coef.tolist(), 'smearing': smear,
             'class_counts': {c: int(counts[c]) for c in classes},
-            'diagnostics': [{'순번': str(df.at[idx, '순번']) if '순번' in df else str(int(idx)+1), '엑셀 행': int(idx) + 2, '함종': str(df.at[idx, '함분류']),
+            'diagnostics': [{'순번': str(df.at[idx, '순번']) if '순번' in df else str(int(idx)+1), '엑셀 행': int(idx) + 2, '함종': str(df.at[idx, '함분류']), '함유형': str(df.at[idx, '함유형']) if '함유형' in df else '',
                              '실제중량': float(actual[j]), '예측중량': float(predicted[j]),
                              '잔차': float(actual[j]-predicted[j]),
                              '오차율(%)': float((predicted[j]-actual[j])/actual[j]*100),
@@ -209,11 +216,11 @@ def export(path, df, bundle):
 
 def template(path):
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
-        pd.DataFrame(columns=[HEADERS[c] for c in ['순번'] + BASE + WEIGHTS + ['총중량']]).to_excel(writer, sheet_name='데이터', index=False)
+        pd.DataFrame(columns=[HEADERS[c] for c in INPUT_COLUMNS]).to_excel(writer, sheet_name='데이터', index=False)
         pd.DataFrame({'함종': SHIP_TYPES + ['초계함', '초계정'],
                       '적용 함종': SHIP_TYPES + ['호위함', '호위함']}).to_excel(writer, sheet_name='함종 안내', index=False)
-        pd.DataFrame({'열': [HEADERS[c] for c in ['순번'] + BASE + WEIGHTS + ['총중량']],
-                      '단위': ['식별번호','문자','년','m','m','m','hp','kW','kn'] + ['tonne'] * 8}).to_excel(writer, sheet_name='단위', index=False)
+        pd.DataFrame({'열': [HEADERS[c] for c in INPUT_COLUMNS],
+                      '단위': ['식별번호','문자','문자','year','m','m','m','hp','kW','kn'] + ['tonne'] * 8}).to_excel(writer, sheet_name='단위', index=False)
 
     # Format the workbook without adding fabricated reference-ship values.
     from openpyxl import load_workbook
@@ -223,7 +230,7 @@ def template(path):
     wb = load_workbook(path)
     ws = wb['데이터']; ws.freeze_panes = 'A2'
     ws.auto_filter.ref = ws.dimensions
-    units = ['식별번호', '함종', '년', 'm', 'm', 'm', 'hp', 'kW', 'kn'] + ['tonne'] * 8
+    units = ['식별번호', '함종', '함유형', 'year', 'm', 'm', 'm', 'hp', 'kW', 'kn'] + ['tonne'] * 8
     for cell, unit in zip(ws[1], units):
         cell.comment = Comment('단위: ' + unit + (' / 경하중량' if cell.value == HEADERS['총중량'] else ''), 'Naval Ship Design')
     validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPES + ['초계함','초계정']) + '"')
@@ -233,6 +240,7 @@ def template(path):
     guide = wb.create_sheet('사용 안내')
     for text in ['Naval Ship Weight Estimator(Total & Series)',
                  '첫 번째 시트의 순번에 함정 고유 번호를 입력하세요. 중복·빈 번호는 제외됩니다. 001처럼 앞의 0을 유지할 수 있습니다.',
+                 '함유형은 별도 기록 항목이며 회귀계수에는 사용하지 않습니다. 입력한 경우 빈 값·?가 있는 행은 제외합니다.',
                  '기존 자료와 추가 자료를 합친 전체 파일을 업로드하면 계수를 다시 추정합니다.',
                  'SWBS100~700: 각 계열 총중량(tonne), 총중량: 실제 경하중량(tonne).',
                  '빈 값, ?, 수치 오류, 0·음수, 잘못된 함종·연도가 있는 함정 행은 모든 회귀분석에서 제외합니다. 총중량도 필수입니다.',
@@ -281,7 +289,7 @@ def save_model_excel(path, bundle):
         pd.DataFrame(types).to_excel(writer, sheet_name='Ship Types', index=False)
         pd.DataFrame(ranges).to_excel(writer, sheet_name='Ranges', index=False)
         coefficients(bundle).to_excel(writer, sheet_name='회귀계수 보기', index=False)
-        pd.DataFrame(diagnostics, columns=['Target','순번','엑셀 행','함종','실제중량','예측중량','잔차','오차율(%)','Dt']).to_excel(writer, sheet_name='Diagnostics', index=False)
+        pd.DataFrame(diagnostics, columns=['Target','순번','엑셀 행','함종','함유형','실제중량','예측중량','잔차','오차율(%)','Dt']).to_excel(writer, sheet_name='Diagnostics', index=False)
         pd.DataFrame(bundle.get('excluded_rows', []), columns=['순번','엑셀 행','함종','제외 사유']).to_excel(writer, sheet_name='Excluded Rows', index=False)
         pd.DataFrame({'Note': ['Naval Ship Weight Estimator / Excel Model v1',
                               'Model Parameters, Ship Types, Ranges are the data used when loading this model.',
@@ -314,6 +322,7 @@ def load_model_excel(path):
             diagnostics = pd.read_excel(book, sheet_name='Diagnostics', dtype={'순번': str})
             if '순번' not in diagnostics:
                 diagnostics['순번'] = (diagnostics['엑셀 행']-1).astype(str)
+            if '함유형' in diagnostics: diagnostics['함유형'] = diagnostics['함유형'].fillna('')
             excluded = pd.read_excel(book, sheet_name='Excluded Rows', dtype={'순번':str}).fillna('').to_dict('records')
             notes = pd.read_excel(book, sheet_name='Notes')['Note'].dropna().astype(str).tolist()[6:]
         expected = set(WEIGHTS + ['총중량_독립회귀'])

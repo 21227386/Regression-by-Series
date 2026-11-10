@@ -15,6 +15,7 @@ class UITests(unittest.TestCase):
     def test_upload_estimate_export_and_template(self):
         fixture=test_model.ModelTests(); fixture.setUp()
         fixture.df.insert(0,'순번',[f'{i+1:03d}' for i in range(len(fixture.df))])
+        fixture.df.insert(2,'함유형','DDG')
         root=tk.Tk(); app=App(root); root.geometry('1380x900+0+0'); root.update()
         try:
             with tempfile.TemporaryDirectory() as tmp:
