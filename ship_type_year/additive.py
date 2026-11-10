@@ -45,8 +45,19 @@ def apply_result(base,result,scales,p,gamma):
 
 
 def fit_baseline(df,target,terms):
-    from model import fit_one
-    base=fit_one(df,target,terms,hull_by_type=False)
+    from model import BASE,SHIP_TYPES
+    counts=df['함분류'].value_counts()
+    classes=sorted(counts.index.tolist(),key=lambda c:(-int(counts[c]),SHIP_TYPES.index(c)))
+    means=df.groupby('함분류')['취역연도'].mean().to_dict()
+    base={'target':target,'terms':terms,'classes':classes,'mean_years':means,'year_by_type':True,
+          'gamma':{c:0.0 for c in classes},'coef':[0.0]*(len(terms)+len(classes)),
+          'class_counts':{c:int(counts[c]) for c in classes},'n':len(df),
+          'ranges':{c:[float(df[c].min()),float(df[c].max())] for c in BASE[1:]},
+          'diagnostics':[{'순번':str(row.get('순번',int(idx)+1)),'엑셀 행':int(idx)+2,'함종':row['함분류'],
+                          '함유형':str(row.get('함유형','')),'취역연도':float(row['취역연도']),
+                          '함종평균연도':means[row['함분류']],'실제중량':float(row[target])}
+                         for idx,row in df.iterrows()]}
+
     result,scales,p=solve(df,base,None)
     full_rank=len(df)>len(result.x) and np.linalg.matrix_rank(result.jac)==len(result.x)
     if not full_rank:

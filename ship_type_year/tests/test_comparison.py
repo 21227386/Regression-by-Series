@@ -81,3 +81,10 @@ class ComparisonTests(unittest.TestCase):
                 if m.get('kind')=='additive':
                     eq=final_equation(name,m,'구축함',df.iloc[0].to_dict())
                     self.assertIn('+',eq);self.assertTrue(render_png(eq).startswith(b'\x89PNG'))
+
+    def test_additive_raw_features_can_be_identified_when_logs_are_collinear(self):
+        from additive import fit_baseline,refit
+        df=fleet();df['소요전력']=df['길이']**2
+        df['SWBS300']=100+.01*df['소요전력']+2*df['길이']
+        m=refit(df,fit_baseline(df,'SWBS300',['PE','L']),0)
+        self.assertLess(m['mape_percent'],1e-5)
