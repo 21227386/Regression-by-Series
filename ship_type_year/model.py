@@ -451,7 +451,8 @@ def load_model_excel(path):
                 bounds[r['Variable']]=[lo,hi]
             if set(bounds)!=set(BASE[1:]):raise ValueError('학습 범위가 누락되었습니다.')
             counts={r['ShipType']: integer(r['Count'],'Count') for _,r in group.iterrows() if pd.notna(r['Count'])}
-            scale=finite(row['YearScale'],'YearScale',True) if year_by_type and 'YearScale' in row and pd.notna(row['YearScale']) else (1.0 if year_by_type else None)
+            scale=finite(row['YearScale'],'YearScale') if year_by_type and 'YearScale' in row and pd.notna(row['YearScale']) else (1.0 if year_by_type else None)
+            if scale is not None and not 0<=scale<=1:raise ValueError('YearScale은 0~1 범위여야 합니다.')
             base_gamma={r['ShipType']:finite(r.get('BaseGamma',r['Gamma']),'BaseGamma') for _,r in group.iterrows()} if year_by_type else {}
             size_by_type=bool(row.get('SizeByType',False)) if pd.notna(row.get('SizeByType',False)) else False
             if size_by_type and name!='SWBS100':raise ValueError('함종별 규모 지수는 SWBS100에서만 지원합니다.')

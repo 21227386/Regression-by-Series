@@ -28,12 +28,16 @@ class ModelTests(unittest.TestCase):
         for name,m in b['models'].items():
             if m['year_by_type']:
                 expected=[.08,-.11] if name==TOTAL_MODEL else [.12,-.2]
-                np.testing.assert_allclose(list(m['gamma'].values()),expected,atol=1e-10)
+                np.testing.assert_allclose(list(m['gamma_base'].values()),expected,atol=1e-10)
+                np.testing.assert_allclose(list(m['gamma'].values()),np.array(expected)*m['year_scale'],atol=1e-10)
+                self.assertLessEqual(m['year_scale'],.1)
             self.assertEqual(m['mean_years'],df.groupby('함분류')['취역연도'].mean().to_dict())
             self.assertNotIn('mean_year',m)
         out=predict(df,b)
-        for c in WEIGHTS:np.testing.assert_allclose(out[c+'_예측_tonne'],df[c],rtol=1e-9)
-        np.testing.assert_allclose(out[TOTAL_MODEL+'_예측_tonne'],df['총중량']-df['SWBS700'],rtol=1e-9)
+        for c in ['SWBS100','SWBS600']:np.testing.assert_allclose(out[c+'_예측_tonne'],df[c],rtol=1e-9)
+        self.assertTrue(np.isfinite(out[TOTAL_MODEL+'_예측_tonne']).all())
+        actual=[r['실제중량'] for r in b['models'][TOTAL_MODEL]['diagnostics']]
+        np.testing.assert_allclose(actual,df['총중량']-df['SWBS700'])
         np.testing.assert_allclose(out[TOTAL_SUM_COLUMN],out[[c+'_예측_tonne' for c in WEIGHTS]].sum(axis=1))
     def test_class_specific_ten_year_change_and_centering(self):
         df=fleet();b=train(df)
@@ -98,12 +102,12 @@ class ModelTests(unittest.TestCase):
         def capture(training,*args):
             m=original(training,*args);seen.append((set(training.index),m));return m
         with patch('model.fit_one',side_effect=capture):chosen=select_year_scale(df,base,'ship')
-        self.assertEqual(len(chosen['year_search']),10)
-        self.assertEqual([r['percent'] for r in chosen['year_search']],list(range(100,0,-10)))
+        self.assertEqual(len(chosen['year_search']),11)
+        self.assertEqual([r['percent'] for r in chosen['year_search']],list(range(0,11)))
         self.assertEqual(chosen['selection']['validation_n'],100)
         self.assertTrue(all(len(indices)<100 for indices,m in seen))
         for indices,m in seen:self.assertEqual(m['mean_years'],df.loc[list(indices)].groupby('함분류')['취역연도'].mean().to_dict())
-        rows=chosen['year_search'];winner=min(rows,key=lambda r:(round(r['validation_mape'],8),round(r['validation_rmse'],8),-r['percent']))
+        rows=chosen['year_search'];winner=min(rows,key=lambda r:(round(r['validation_mape'],8),round(r['validation_rmse'],8),r['percent']))
         self.assertEqual(chosen['year_scale'],winner['percent']/100)
         self.assertEqual(len(chosen['cv_predictions']),100)
         for r in chosen['cv_predictions']:self.assertNotIn(int(r['엑셀 행'])-2,seen[int(r['fold'])-1][0])
@@ -112,7 +116,7 @@ class ModelTests(unittest.TestCase):
         from year_search import select_year_scale,validation_splits
         df=fleet();base=fit_one(df,'SWBS200',TERMS[200])
         failed=select_year_scale(df,base,'group')
-        self.assertEqual(failed['year_scale'],1)
+        self.assertEqual(failed['year_scale'],0)
         self.assertIn('검증 불가',failed['selection']['status'])
         self.assertTrue(all(r['validation_mape'] is None for r in failed['year_search']))
         df['함급']=[f'class-{i//10}' for i in range(100)]
@@ -142,6 +146,21 @@ class ModelTests(unittest.TestCase):
         df=fleet();mask=df['함분류']=='호위함'
         df.loc[mask,['길이','폭','깊이']]=[100,15,8]
         with self.assertRaisesRegex(ValueError,'호위함'):train(df)
+    def test_zero_scale_roundtrip_and_no_year_influence(self):
+        df=fleet();b=train(df,validation_mode='group') # No class column: explicit unvalidated 0% fallback.
+        for name,m in b['models'].items():
+            if m['year_by_type']:
+                self.assertEqual(m['year_scale'],0)
+                self.assertTrue(all(v==0 for v in m['gamma'].values()))
+                self.assertEqual([r['percent'] for r in m['year_search']],list(range(11)))
+                self.assertEqual(sum(bool(r['selected']) for r in m['year_search']),1)
+        earlier=df.iloc[[0]].copy();later=earlier.copy();later['취역연도']+=30
+        for name in b['models']:
+            np.testing.assert_allclose(predict(earlier,b)[name+'_예측_tonne'],predict(later,b)[name+'_예측_tonne'])
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'zero.xlsx';save_model_excel(p,b);loaded=load_model_excel(p)
+            self.assertEqual(loaded['models']['SWBS200']['year_scale'],0)
+            np.testing.assert_allclose(predict(df,b)[TOTAL_SUM_COLUMN],predict(df,loaded)[TOTAL_SUM_COLUMN],rtol=1e-12)
     def test_missing_year_variation_is_explicit(self):
         df=fleet();df.loc[df['함분류']=='호위함','취역연도']=2000
         with self.assertRaisesRegex(ValueError,'호위함'):train(df)
@@ -157,7 +176,7 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(loaded['models']['SWBS100']['size_alpha'],b['models']['SWBS100']['size_alpha'])
             self.assertAlmostEqual(loaded['models']['SWBS100']['volume_reference'],b['models']['SWBS100']['volume_reference'])
             self.assertIn('αt',coefficients(b))
-            self.assertEqual(len(loaded['models']['SWBS200']['year_search']),10)
+            self.assertEqual(len(loaded['models']['SWBS200']['year_search']),11)
             self.assertEqual(loaded['models']['SWBS200']['year_scale'],b['models']['SWBS200']['year_scale'])
     def test_patrol_pooling_and_input_exclusions(self):
         df=fleet();df.loc[df['함분류']=='호위함','함분류']='초계정'

@@ -1,6 +1,6 @@
 """Fold-local baseline estimation and constrained year-effect scale search."""
 import numpy as np
-SCALES=tuple(i/10 for i in range(10,0,-1))
+SCALES=tuple(i/100 for i in range(0,11))
 
 def metrics(actual,predicted):
     if not np.isfinite(predicted).all() or (predicted<=0).any():raise ValueError('유효하지 않은 예측값')
@@ -62,7 +62,7 @@ def select_year_scale(df,baseline,validation_mode='ship'):
     n=sum(len(te) for _,_,te,_ in folds);usable=len(folds)>=2 and n>=3
     reason=reason or ' / '.join(failures[:3])
     if n<len(df):reason=(reason+' / ' if reason else '')+f'자료 부족 또는 분할 실패로 {len(df)-n}척은 검증하지 못했습니다.'
-    if not usable:reason=reason or '유효 검증이 2회 이상·3척 이상이어야 합니다. 100% 유지.'
+    if not usable:reason=reason or '유효 검증이 2회 이상·3척 이상이어야 합니다. 0% 임시 적용.'
     rows=[];candidates={};cv={}
     for q in SCALES:
         r={'percent':int(round(q*100)),'train_mape':None,'train_rmse':None,'validation_mape':None,'validation_rmse':None,'validation_n':n,'folds':len(folds),'selected':False,'error':''}
@@ -79,9 +79,9 @@ def select_year_scale(df,baseline,validation_mode='ship'):
         rows.append(r)
     valid=[r for r in rows if r['validation_mape'] is not None and not r['error']]
     if valid:
-        best=min(valid,key=lambda r:(round(r['validation_mape'],8),round(r['validation_rmse'],8),-r['percent']));q=best['percent']/100
+        best=min(valid,key=lambda r:(round(r['validation_mape'],8),round(r['validation_rmse'],8),r['percent']));q=best['percent']/100
         status='검증 선택' if n==len(df) else '부분 검증 선택'
-    else:q=1.0;status='검증 불가 · 100% 유지';reason=reason or '모든 후보의 검증 계산 실패'
+    else:q=0.0;status='검증 불가 · 0% 임시 적용';reason=reason or '모든 후보의 검증 계산 실패'
     result=candidates.get(q) or refit_scale(df,baseline,q)
     for r in rows:r['selected']=r['percent']==int(round(q*100))
     best=next(r for r in rows if r['selected'])

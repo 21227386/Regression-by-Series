@@ -201,7 +201,7 @@ class App:
         self.guide_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(1,self.guide_tab,text='Equations & Guide')
         self.build_guide(self.guide_tab)
         self.search_tab=tk.Frame(tabs,bg=WHITE);tabs.insert(2,self.search_tab,text='Year Effect Search')
-        self.search_note=tk.StringVar(value='연도 효과 100%~10% 후보를 비교합니다.')
+        self.search_note=tk.StringVar(value='연도 효과 0%~10% (1% 간격) 후보를 비교합니다.')
         tk.Label(self.search_tab,textvariable=self.search_note,bg=WHITE,fg=INK,font=(KO,10),wraplength=930,justify='left',anchor='w').pack(fill='x',padx=10,pady=8)
         self.search_graph=tk.Canvas(self.search_tab,bg='#f3f7fa',height=115,highlightthickness=0)
         self.search_graph.pack(side='bottom',fill='x',padx=10,pady=5)
@@ -331,7 +331,7 @@ class App:
         for key,color in [('train_mape','#8094a0'),('validation_mape',TEAL)]:
             points=[]
             for r in sorted(rows,key=lambda v:v['percent']):
-                x=left+(r['percent']-10)/90*(right-left)
+                x=left+r['percent']/10*(right-left)
                 if key=='train_mape':c.create_text(x,bottom+14,text=str(r['percent'])+'%',font=(EN,9),fill=MUTED)
                 if r.get(key) is None:continue
                 y=bottom-r[key]/ceiling*(bottom-top);points.extend([x,y]);c.create_oval(x-3,y-3,x+3,y+3,fill=color,outline='')
@@ -417,7 +417,7 @@ class App:
         p=self.choose()
         if not p:return
         validation='group' if self.validation_mode.get().startswith('함급') else 'ship'
-        self.busy=True; self.status.set('TRAINING  |  100%~10% 후보 재학습·교차검증 중…')
+        self.busy=True; self.status.set('TRAINING  |  0%~10% (1% 간격) 후보 재학습·교차검증 중…')
         state={}
         def worker():
             try:
