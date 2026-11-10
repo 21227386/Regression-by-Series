@@ -40,4 +40,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="windows-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          gh release create "$tag" dist/SWBS_Regression.exe gui-preview.png regression-preview.png --target "$GITHUB_SHA" --title "Naval Ship Weight Estimator Windows build ${GITHUB_RUN_NUMBER}" --notes "Windows x64 executable. Units: tonne, m, hp, kW, kn. Cruising speed is retained as input but is not used in the supplied regression equations."
+          gh release create "$tag" dist/SWBS_Regression.exe gui-preview.png regression-preview.png ship-types-preview.png --target "$GITHUB_SHA" --title "Naval Ship Weight Estimator Windows build ${GITHUB_RUN_NUMBER}" --notes "Windows x64 executable. Units: tonne, m, hp, kW, kn. Cruising speed is retained as input but is not used in the supplied regression equations."

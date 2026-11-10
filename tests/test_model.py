@@ -105,7 +105,7 @@ class ModelTests(unittest.TestCase):
             p=Path(tmp)/'units.xlsx'
             template(p)
             wb=load_workbook(p)
-            self.assertEqual([c.value for c in wb['데이터'][1]],[HEADERS[c] for c in BASE+WEIGHTS+['총중량']])
+            self.assertEqual([c.value for c in wb['데이터'][1]],[HEADERS[c] for c in ['순번']+BASE+WEIGHTS+['총중량']])
             for ws in wb:
                 for dim in ws.column_dimensions.values():self.assertEqual(dim.width,10)
                 for cell in ws[1]:
@@ -178,6 +178,32 @@ class ModelTests(unittest.TestCase):
             np.testing.assert_allclose(predict(self.df,edited)['SWBS100_예측_tonne'],a['SWBS100_예측_tonne']*2,rtol=1e-12)
             wb=load_workbook(p);wb['Ship Types']['D2']=0;wb.save(p);wb.close()
             with self.assertRaisesRegex(ValueError,'Dt'):load_model_excel(p)
+    def test_identifiers_and_group_diagnostics(self):
+        from model import save_model_excel, load_model_excel, diagnostic_rows, diagnostic_metrics
+        data=self.df.copy();data.insert(0,'순번',[f'{i+1:03d}' for i in range(len(data))])
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'ids.xlsx';data.to_excel(p,index=False)
+            loaded=read_excel(p)
+            self.assertEqual(loaded['순번'].iloc[0],'001')
+            bundle=train(loaded);model=bundle['models']['SWBS100']
+            self.assertEqual(model['diagnostics'][0]['순번'],'001')
+            group=diagnostic_rows(model,'호위함')
+            self.assertEqual(len(group),60)
+            self.assertTrue(all(r['함종']=='호위함' for r in group))
+            self.assertAlmostEqual(diagnostic_metrics(group)['r2'],1)
+            self.assertIsNone(diagnostic_metrics(group[:1])['r2'])
+            self.assertEqual(diagnostic_metrics(diagnostic_rows(model,'지원함'))['n'],0)
+            save_model_excel(p,bundle)
+            restored=load_model_excel(p)
+            self.assertEqual(restored['models']['SWBS100']['diagnostics'][0]['순번'],'001')
+            data.loc[0,'순번']='002' # both ambiguous rows excluded
+            data.loc[2,'순번']='?'
+            data.loc[3,'순번']=' '
+            data.to_excel(p,index=False)
+            checked=read_excel(p)
+            self.assertEqual(len(checked),116)
+            self.assertEqual(checked['순번'].iloc[0],'005')
+            self.assertEqual([r['엑셀 행'] for r in checked.attrs['excluded_rows']],[2,3,4,5])
     def test_insufficient(self):
         with self.assertRaisesRegex(ValueError,'부족'): train(self.df.iloc[:3])
 

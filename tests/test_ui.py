@@ -14,6 +14,7 @@ import test_model
 class UITests(unittest.TestCase):
     def test_upload_estimate_export_and_template(self):
         fixture=test_model.ModelTests(); fixture.setUp()
+        fixture.df.insert(0,'순번',[f'{i+1:03d}' for i in range(len(fixture.df))])
         root=tk.Tk(); app=App(root); root.geometry('1380x900+0+0'); root.update()
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -48,6 +49,17 @@ class UITests(unittest.TestCase):
                 self.assertEqual(len(app.ship_tree.get_children()),120)
                 self.assertEqual(len(app.coeff_tree.get_children()),16)
                 self.assertEqual(len(app.metric_tree.get_children()),8)
+                app.open_ship_types();root.update()
+                self.assertEqual(len(app.ship_tree.get_children()),60)
+                self.assertEqual(len(app.coeff_tree.get_children()),8)
+                self.assertEqual(app.metric_tree.item(app.metric_tree.get_children()[0])['values'][1],60)
+                self.assertEqual(len(app.reg_graph.find_withtag('ship_number')),120)
+                app.select_graph_ship('001','Selected 001');root.update()
+                self.assertTrue(app.ship_tree.selection())
+                self.assertEqual(str(app.ship_tree.item(app.ship_tree.selection()[0])['values'][0]).zfill(3),'001')
+                app.open_regression();root.update()
+                self.assertEqual(len(app.ship_tree.get_children()),120)
+                self.assertEqual(len(app.coeff_tree.get_children()),16)
                 for c in BASE:app.inputs[c].set(str(row[c]))
                 app.estimate()
                 # Screenshot uses synthetic test data only, prominently identified.
@@ -60,4 +72,6 @@ class UITests(unittest.TestCase):
                     ImageGrab.grab(bbox=box).save(os.environ['UI_SCREENSHOT'])
                     app.open_regression();root.update();time.sleep(.4)
                     ImageGrab.grab(bbox=box).save('regression-preview.png')
+                    app.open_ship_types();root.update();time.sleep(.4)
+                    ImageGrab.grab(bbox=box).save('ship-types-preview.png')
         finally:root.destroy()

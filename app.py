@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
-                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel)
+                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, diagnostic_rows, diagnostic_metrics)
 
 TITLE = 'Naval Ship Weight Estimator(Total & Series)'
 NAVY, INK, TEAL, GOLD = '#102638', '#19384a', '#087f87', '#c69c55'
@@ -31,7 +31,7 @@ class App:
         self.header()
         footer = tk.Frame(root, bg=NAVY, height=30); footer.pack(side='bottom', fill='x')
         self.status = tk.StringVar(value='READY  |  실적함 데이터를 업로드하여 시작하세요.')
-        tk.Label(footer, textvariable=self.status, bg=NAVY, fg='#c6d7df', font=(KO, 9)).pack(side='left', padx=14, pady=7)
+        tk.Label(footer, textvariable=self.status, bg=NAVY, fg='#c6d7df', font=(KO, 9)).pack(side='left', padx=14, pady=5)
         tk.Label(footer, text='Copyright by Naval Ship Design Technology Division', font=(EN, 10), bg=NAVY, fg='#d7bd88').pack(side='right', padx=16)
         body = tk.Frame(root, bg=BG); body.pack(fill='both', expand=True)
         sidebar = tk.Frame(body, bg=NAVY, width=290); sidebar.pack(side='left', fill='y'); sidebar.pack_propagate(False)
@@ -51,7 +51,7 @@ class App:
         button = tk.Button(parent, text=text, command=lambda: self.safe(action), font=(EN, 11, 'bold'),
                            bg=TEAL if primary else '#e4edf2', fg=WHITE if primary else INK,
                            activebackground='#116d76' if primary else '#cfdee7', activeforeground=WHITE if primary else INK,
-                           relief='raised', bd=3, cursor='hand2', padx=12, pady=7)
+                           relief='raised', bd=3, cursor='hand2', padx=12, pady=5)
         return button
 
     def header(self):
@@ -89,9 +89,10 @@ class App:
         self.button(inner, 'Download Input File Template', self.make_template).pack(fill='x', pady=5)
         self.button(inner, 'Input File Upload', self.fit, True).pack(fill='x', pady=5)
         self.fleet_info = tk.StringVar(value='아직 학습된 모델이 없습니다.')
-        tk.Label(inner, textvariable=self.fleet_info, wraplength=245, justify='left', bg=NAVY, fg='#b8cdd8', font=(KO,10)).pack(anchor='w', pady=7)
+        tk.Label(inner, textvariable=self.fleet_info, wraplength=245, justify='left', bg=NAVY, fg='#b8cdd8', font=(KO,10)).pack(anchor='w', pady=5)
         self.label(inner, '02  /  REGRESSION', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
-        self.button(inner, 'View Regression Results', self.open_regression).pack(fill='x', pady=4)
+        self.button(inner, 'View All Results', self.open_regression).pack(fill='x', pady=3)
+        self.button(inner, 'View Ship Types Results', self.open_ship_types).pack(fill='x', pady=3)
         self.label(inner, '03  /  MODEL LIBRARY', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'Save Regression Model', self.save).pack(fill='x', pady=5)
         self.button(inner, 'Load Regression Model', self.load).pack(fill='x', pady=5)
@@ -141,7 +142,15 @@ class App:
         return tree
 
     def open_regression(self):
-        self.notebook.select(self.model_tab)
+        self.ship_filter.set('All Ship Types');self.type_selector.configure(state='disabled')
+        self.update_diagnostics();self.notebook.select(self.model_tab);self.reg_tabs.select(0)
+
+    def open_ship_types(self):
+        self.require()
+        classes=self.bundle['models']['SWBS100']['classes']
+        if self.ship_filter.get() not in classes:self.ship_filter.set(classes[0])
+        self.type_selector.configure(values=classes,state='readonly')
+        self.update_diagnostics();self.notebook.select(self.model_tab);self.reg_tabs.select(0)
 
     def scroll_table(self, parent, columns, widths, height=8):
         frame=tk.Frame(parent,bg=WHITE); frame.pack(fill='both',expand=True)
@@ -156,7 +165,7 @@ class App:
         p=tk.Frame(self.model_tab,bg=WHITE,padx=18,pady=15);p.pack(fill='both',expand=True)
         self.label(p,'Regression Results',21,bold=True,english=True).pack(anchor='w')
         self.regression_summary=tk.StringVar(value='전체 실적함 파일을 업로드하면 회귀 결과가 표시됩니다.')
-        tk.Label(p,textvariable=self.regression_summary,bg=WHITE,fg=MUTED,font=(KO,10),anchor='w',justify='left',wraplength=940).pack(fill='x',pady=7)
+        tk.Label(p,textvariable=self.regression_summary,bg=WHITE,fg=MUTED,font=(KO,10),anchor='w',justify='left',wraplength=940).pack(fill='x',pady=5)
         select=tk.Frame(p,bg=WHITE);select.pack(fill='x',pady=5)
         self.label(select,'Analysis Target',12,bold=True,english=True).pack(side='left',padx=(0,12))
         self.reg_target=tk.StringVar(value='SWBS100')
@@ -164,7 +173,16 @@ class App:
         self.reg_selector.pack(side='left');self.reg_selector.bind('<<ComboboxSelected>>',lambda e:self.update_diagnostics())
         self.reg_stats=tk.StringVar(value='R² / RMSE / MAPE —')
         tk.Label(select,textvariable=self.reg_stats,bg=WHITE,fg=TEAL,font=(EN,11,'bold')).pack(side='left',padx=12)
-        tabs=ttk.Notebook(p);tabs.pack(fill='both',expand=True,pady=(8,0))
+        filters=tk.Frame(p,bg=WHITE);filters.pack(fill='x',pady=(0,3))
+        self.label(filters,'Ship Type',11,bold=True,english=True).pack(side='left',padx=(0,12))
+        self.ship_filter=tk.StringVar(value='All Ship Types')
+        self.type_selector=ttk.Combobox(filters,textvariable=self.ship_filter,state='disabled',width=18)
+        self.type_selector.pack(side='left');self.type_selector.bind('<<ComboboxSelected>>',lambda e:self.update_diagnostics())
+        self.show_ship_ids=tk.BooleanVar(value=True)
+        tk.Checkbutton(filters,text='Show Ship Numbers',variable=self.show_ship_ids,command=self.draw_regression_graphs,
+                       bg=WHITE,fg=INK,font=(EN,11),activebackground=WHITE).pack(side='left',padx=14)
+        self.label(filters,'전체 모형의 함종별 결과 조회 · 별도 재학습 없음',9,MUTED).pack(side='left')
+        tabs=ttk.Notebook(p);self.reg_tabs=tabs;tabs.pack(fill='both',expand=True,pady=(8,0))
         overview=tk.Frame(tabs,bg=WHITE);coefs=tk.Frame(tabs,bg=WHITE);ships=tk.Frame(tabs,bg=WHITE)
         stats=tk.Frame(tabs,bg=WHITE);notes=tk.Frame(tabs,bg=WHITE)
         for frame,title in [(overview,'Graphs'),(coefs,'Coefficients'),(ships,'Ship Diagnostics'),(stats,'Fit Statistics'),(notes,'Notes')]:tabs.add(frame,text=title)
@@ -172,34 +190,66 @@ class App:
         self.reg_graph.pack(fill='both',expand=True,pady=8)
         self.reg_graph.bind('<Configure>',lambda e:self.draw_regression_graphs())
         self.label(overview,'왼쪽: 실제·예측 중량(tonne) / 오른쪽: 예측 중량 대비 오차율(%)',9,MUTED).pack(anchor='w',pady=3)
-        self.label(overview,'점 위에 마우스를 올리면 엑셀 행·함종·Dt·중량·오차를 확인할 수 있습니다. 적합도는 학습자료 기준입니다.',9,MUTED).pack(anchor='w',pady=3)
+        self.label(overview,'점의 순번으로 함정을 식별합니다. 마우스: 상세 정보 / 클릭: 진단표 이동. 적합도는 학습자료 기준입니다.',9,MUTED).pack(anchor='w',pady=3)
         self.graph_hover=tk.StringVar(value='실적함 데이터를 학습하거나 모델 엑셀을 불러오세요.')
         tk.Label(overview,textvariable=self.graph_hover,bg=WHITE,fg=INK,font=(KO,9),anchor='w',wraplength=930).pack(fill='x',pady=4)
         cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','γ','기준연도']
         self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100])
-        self.ship_tree=self.scroll_table(ships,['Excel Row','Ship Type','Dt','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,95,95,135,135,130,110])
+        self.ship_diagnostics_tab=ships
+        self.ship_tree=self.scroll_table(ships,['Ship No.','Excel Row','Ship Type','Dt','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,80,90,85,120,120,120,100])
+        self.ship_tree.tag_configure('large_error',foreground='#ae4437')
         self.metric_tree=self.scroll_table(stats,['Target','Ships','RMSE (tonne)','MAPE (%)','R²','Parameters','Condition'],[180,65,135,100,100,90,120])
         self.log=tk.Text(notes,wrap='word',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
         sy=ttk.Scrollbar(notes,orient='vertical',command=self.log.yview);self.log.configure(yscrollcommand=sy.set)
         sy.pack(side='right',fill='y');self.log.pack(fill='both',expand=True)
         self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계함·초계정의 호위함 통합 후 척수가 가장 많은 함종입니다.\n동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
 
+    def selected_type(self):
+        choice=self.ship_filter.get()
+        return None if choice=='All Ship Types' else choice
+
     def update_diagnostics(self):
         if not self.bundle:return
+        import math
+        cls=self.selected_type()
+        base=self.bundle['models']['SWBS100']
+        view='전체 함정' if cls is None else cls
+        self.regression_summary.set(f"조회: {view} / 전체 학습 {base['n']}척 / 기준 함종: {base['classes'][0]} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows',[]))}척\n함종별 적합도는 전체 모형의 해당 함종 자료에서 계산합니다. 순번은 그래프·진단표·엑셀에 보존됩니다.")
         model=self.bundle['models'].get(self.reg_target.get())
         if not model:return
-        r='—' if model['r2'] is None else f"{model['r2']:.4f}"
-        self.reg_stats.set(f"R² {r}   RMSE {model['rmse_tonne']:,.2f} t   MAPE {model['mape_percent']:.2f}%")
-        self.ship_tree.delete(*self.ship_tree.get_children())
-        for d in model.get('diagnostics',[]):
-            self.ship_tree.insert('','end',values=(d['엑셀 행'],d['함종'],f"{d['Dt']:.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"))
+        rows=diagnostic_rows(model,cls);metric=diagnostic_metrics(rows)
+        def fmt(v,places=3):return '—' if v is None else f'{v:,.{places}f}'
+        self.reg_stats.set(f"N {metric['n']}   R² {fmt(metric['r2'],4)}   RMSE {fmt(metric['rmse_tonne'],2)} t   MAPE {fmt(metric['mape_percent'],2)}%")
+        self.ship_tree.delete(*self.ship_tree.get_children());self.ship_row_ids={}
+        for d in sorted(rows,key=lambda r:abs(r['오차율(%)']),reverse=True):
+            item=self.ship_tree.insert('','end',values=(d.get('순번',str(int(d['엑셀 행'])-1)),d['엑셀 행'],d['함종'],f"{d['Dt']:.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"),tags=('large_error',) if abs(d['오차율(%)'])>=20 else ())
+            self.ship_row_ids[str(d.get('순번',str(int(d['엑셀 행'])-1)))]=item
+        self.metric_tree.delete(*self.metric_tree.get_children());self.coeff_tree.delete(*self.coeff_tree.get_children())
+        for name,x in self.bundle['models'].items():
+            m=diagnostic_metrics(diagnostic_rows(x,cls))
+            self.metric_tree.insert('','end',values=(name,m['n'],fmt(m['rmse_tonne']),fmt(m['mape_percent']),fmt(m['r2'],4),x['parameters'],f"{x['condition_number']:.2f}"))
+            terms=dict(zip(x['terms'],x['coef'][1:1+len(x['terms'])]));offset=1+len(x['terms'])
+            for j,ship_type in enumerate(x['classes']):
+                if cls is not None and ship_type!=cls:continue
+                values=[name,ship_type,x.get('class_counts',{}).get(ship_type,'—'),x['classes'][0],
+                        f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
+                values += [f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE','year']]
+                self.coeff_tree.insert('','end',values=values+[f"{x['mean_year']:.4f}"])
+        self.graph_hover.set('함정별 표는 절대 오차율이 큰 순서입니다. |오차율| 20% 이상은 붉은색으로 표시합니다.')
         self.draw_regression_graphs()
+
+    def select_graph_ship(self, number, message):
+        self.graph_hover.set(message)
+        item=self.ship_row_ids.get(str(number))
+        if item:
+            self.reg_tabs.select(self.ship_diagnostics_tab)
+            self.ship_tree.selection_set(item);self.ship_tree.focus(item);self.ship_tree.see(item)
 
     def draw_regression_graphs(self):
         c=self.reg_graph;c.delete('all')
         w,h=max(c.winfo_width(),700),max(c.winfo_height(),220)
         if not self.bundle:return
-        rows=self.bundle['models'].get(self.reg_target.get(),{}).get('diagnostics',[])
+        rows=diagnostic_rows(self.bundle['models'].get(self.reg_target.get(),{}),self.selected_type())
         if not rows:
             c.create_text(w/2,h/2,text='No training diagnostics available',font=(EN,15),fill=MUTED);return
         actual=[float(r['실제중량']) for r in rows];predicted=[float(r['예측중량']) for r in rows]
@@ -223,9 +273,16 @@ class App:
                 x=left+(actual[i] if side==0 else predicted[i])/max_weight*(right-left)
                 fraction=predicted[i]/max_weight if side==0 else (errors[i]+max_error)/(2*max_error)
                 y=bottom-fraction*(bottom-top)
-                point=c.create_oval(x-3,y-3,x+3,y+3,fill=TEAL,outline=WHITE)
-                message=f"Excel {d['엑셀 행']}행 / {d['함종']} / Dt {d['Dt']:.5g} / 실제 {d['실제중량']:,.2f} t / 예측 {d['예측중량']:,.2f} t / 오차 {d['오차율(%)']:.2f}%"
-                c.tag_bind(point,'<Enter>',lambda e,t=message:self.graph_hover.set(t))
+                color='#ae4437' if abs(d['오차율(%)'])>=20 else TEAL
+                point=c.create_oval(x-3,y-3,x+3,y+3,fill=color,outline=WHITE)
+                number=str(d.get('순번',str(int(d['엑셀 행'])-1)))
+                items=[point]
+                if self.show_ship_ids.get():
+                    items.append(c.create_text(x+4,y-6,text=number,anchor='sw',font=(EN,8),fill=color,tags=('ship_number',)))
+                message=f"순번 {number} / Excel {d['엑셀 행']}행 / {d['함종']} / Dt {d['Dt']:.5g} / 실제 {d['실제중량']:,.2f} t / 예측 {d['예측중량']:,.2f} t / 오차 {d['오차율(%)']:.2f}%"
+                for item in items:
+                    c.tag_bind(item,'<Enter>',lambda e,t=message:self.graph_hover.set(t))
+                    c.tag_bind(item,'<Button-1>',lambda e,n=number,t=message:self.select_graph_ship(n,t))
 
     def draw_chart(self):
         c=self.chart; c.delete('all'); width=max(c.winfo_width(),240)
@@ -288,18 +345,11 @@ class App:
         m=self.bundle['models']['SWBS100'];ref=m['classes'][0]
         self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
         self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 함종입니다. C는 K와 별도 적용합니다.")
-        self.metric_tree.delete(*self.metric_tree.get_children());self.coeff_tree.delete(*self.coeff_tree.get_children())
-        for name,x in self.bundle['models'].items():
-            r='—' if x['r2'] is None else f"{x['r2']:.4f}"
-            self.metric_tree.insert('','end',values=(name,x['n'],f"{x['rmse_tonne']:,.3f}",f"{x['mape_percent']:.3f}",r,x['parameters'],f"{x['condition_number']:.2f}"))
-            terms=dict(zip(x['terms'],x['coef'][1:1+len(x['terms'])]));offset=1+len(x['terms'])
-            for j,cls in enumerate(x['classes']):
-                values=[name,cls,x.get('class_counts',{}).get(cls,'—'),x['classes'][0],
-                        f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
-                values += [f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE','year']]
-                self.coeff_tree.insert('','end',values=values+[f"{x['mean_year']:.4f}"])
         self.reg_selector.configure(values=list(self.bundle['models']))
         if self.reg_target.get() not in self.bundle['models']:self.reg_target.set('SWBS100')
+        classes=m['classes']
+        if self.ship_filter.get() not in ['All Ship Types']+classes:self.ship_filter.set('All Ship Types')
+        self.type_selector.configure(values=classes,state='disabled' if self.ship_filter.get()=='All Ship Types' else 'readonly')
         self.update_diagnostics()
         self.show('\n'.join(['기준 함종 / Reference: '+ref,
                    '유효 학습 척수 / Valid ships: '+str(m['n']),
