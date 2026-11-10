@@ -40,6 +40,16 @@ class UITests(unittest.TestCase):
                 with patch.object(app,'choose',return_value=str(form)),patch('app.messagebox.showinfo'):
                     app.make_template()
                 self.assertTrue(form.exists())
+                model_path=Path(tmp)/'model.xlsx'
+                with patch.object(app,'choose',return_value=str(model_path)):
+                    app.save()
+                    self.assertTrue(model_path.exists())
+                    app.load()
+                self.assertEqual(len(app.ship_tree.get_children()),120)
+                self.assertEqual(len(app.coeff_tree.get_children()),16)
+                self.assertEqual(len(app.metric_tree.get_children()),8)
+                for c in BASE:app.inputs[c].set(str(row[c]))
+                app.estimate()
                 # Screenshot uses synthetic test data only, prominently identified.
                 app.status.set('DEMONSTRATION  |  SYNTHETIC TEST DATA / 실제 함정 데이터가 아닙니다.')
                 app.notebook.select(app.design_tab);root.update()
@@ -48,4 +58,6 @@ class UITests(unittest.TestCase):
                     root.update();time.sleep(1)
                     box=(root.winfo_rootx(),root.winfo_rooty(),root.winfo_rootx()+root.winfo_width(),root.winfo_rooty()+root.winfo_height())
                     ImageGrab.grab(bbox=box).save(os.environ['UI_SCREENSHOT'])
+                    app.open_regression();root.update();time.sleep(.4)
+                    ImageGrab.grab(bbox=box).save('regression-preview.png')
         finally:root.destroy()

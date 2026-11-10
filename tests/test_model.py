@@ -148,6 +148,36 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(bundle['models']['SWBS100']['n'],112)
             b=read_excel(p,training=False)
             self.assertEqual(len(b),114) # Missing/invalid actual weights are irrelevant for prediction.
+    def test_most_frequent_reference_and_reparameterization(self):
+        data=self.df.drop(index=list(range(0,20,2))) # 50 destroyers, 60 frigates
+        bundle=train(data)
+        m=bundle['models']['SWBS100']
+        self.assertEqual(m['classes'][0],'호위함')
+        self.assertEqual(m['class_counts'],{'호위함':60,'구축함':50})
+        self.assertAlmostEqual(m['coef'][0],1.5)
+        self.assertAlmostEqual(m['coef'][-1],-.3)
+        np.testing.assert_allclose(predict(data,bundle)['SWBS100_예측_tonne'],data['SWBS100'],rtol=1e-9)
+        # Patrol ships count toward the frigate reference, including during Excel ingestion.
+        data=self.df.copy();data.loc[data.index%3==0,'함분류']='초계정'
+        pooled=train(data)
+        self.assertEqual(pooled['models']['SWBS100']['classes'][0],'호위함')
+    def test_excel_model_roundtrip_and_visible_parameters(self):
+        from model import save_model_excel, load_model_excel
+        from openpyxl import load_workbook
+        bundle=train(self.df)
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'model.xlsx';save_model_excel(p,bundle)
+            loaded=load_model_excel(p)
+            a=predict(self.df,bundle);b=predict(self.df,loaded)
+            for c in WEIGHTS:
+                np.testing.assert_allclose(a[c+'_예측_tonne'],b[c+'_예측_tonne'],rtol=1e-12)
+            self.assertEqual(len(loaded['models']['SWBS100']['diagnostics']),120)
+            self.assertEqual(loaded['models']['SWBS100']['class_counts'],{'구축함':60,'호위함':60})
+            wb=load_workbook(p);ws=wb['Model Parameters'];ws['B2']=ws['B2'].value*2;wb.save(p);wb.close()
+            edited=load_model_excel(p)
+            np.testing.assert_allclose(predict(self.df,edited)['SWBS100_예측_tonne'],a['SWBS100_예측_tonne']*2,rtol=1e-12)
+            wb=load_workbook(p);wb['Ship Types']['D2']=0;wb.save(p);wb.close()
+            with self.assertRaisesRegex(ValueError,'Dt'):load_model_excel(p)
     def test_insufficient(self):
         with self.assertRaisesRegex(ValueError,'부족'): train(self.df.iloc[:3])
 

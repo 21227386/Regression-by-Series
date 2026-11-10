@@ -95,7 +95,8 @@ def design(df, terms, classes, mean_year):
     return np.column_stack(cols)
 
 def fit_one(df, target, terms):
-    classes = sorted(df['함분류'].unique().tolist())
+    counts = df['함분류'].value_counts()
+    classes = sorted(counts.index.tolist(), key=lambda c: (-int(counts[c]), SHIP_TYPES.index(c)))
     mean_year = float(df['취역연도'].mean())
     x = design(df, terms, classes, mean_year)
     if len(df) <= x.shape[1]:
@@ -111,6 +112,13 @@ def fit_one(df, target, terms):
     denom = float(((actual - actual.mean()) ** 2).sum())
     return {'target': target, 'terms': terms, 'classes': classes, 'mean_year': mean_year,
             'coef': coef.tolist(), 'smearing': smear,
+            'class_counts': {c: int(counts[c]) for c in classes},
+            'diagnostics': [{'엑셀 행': int(idx) + 2, '함종': str(df.at[idx, '함분류']),
+                             '실제중량': float(actual[j]), '예측중량': float(predicted[j]),
+                             '잔차': float(actual[j]-predicted[j]),
+                             '오차율(%)': float((predicted[j]-actual[j])/actual[j]*100),
+                             'Dt': 1.0 if df.at[idx, '함분류']==classes[0] else float(np.exp(coef[1+len(terms)+classes[1:].index(df.at[idx, '함분류'])]))}
+                            for j, idx in enumerate(df.index)],
             'ranges': {c: [float(df[c].min()), float(df[c].max())] for c in BASE[1:]},
             'n': len(df), 'parameters': x.shape[1], 'condition_number': float(np.linalg.cond(x)),
             'rmse_tonne': float(np.sqrt(np.mean((actual-predicted)**2))),
@@ -136,7 +144,7 @@ def train(df):
             models['총중량_독립회귀'] = fit_one(df, '총중량', ['LBD', 'P', 'year'])
         except ValueError as e:
             warnings.append('선택 총중량 독립회귀 미실행: ' + str(e))
-    return {'version': 2, 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
+    return {'version': 3, 'models': models, 'warnings': warnings, 'excluded_rows': excluded}
 
 def predict(df, bundle):
     validate_model_types(bundle)
@@ -159,13 +167,13 @@ def coefficients(bundle):
     for name, m in bundle['models'].items():
         b = m['coef']; terms = m['terms']; p = 1+len(terms)
         row = {'계열': name, 'K': float(np.exp(b[0])), '역변환보정': m['smearing'],
-               '기준함분류': m['classes'][0], '기준취역연도': m['mean_year'],
+               '기준함종': m['classes'][0], '기준취역연도': m['mean_year'],
                '식': 'W = K × ' + ' × '.join({'LBD':'(LBD)^α', 'LB':'(LB)^α', 'L':'L^β',
                   'P':'P^β' if 'LBD' in terms else 'P^α', 'PE':'PE^β' if 'LBD' in terms else 'PE^α',
                   'year':'exp[γ(Y−기준연도)/10]'}[t] for t in terms) + ' × Dt × 역변환보정'}
         row.update({t + '_회귀계수': float(v) for t, v in zip(terms, b[1:p])})
         for j, cls in enumerate(m['classes']):
-            rows.append({**row, '함분류': cls, 'Dt': 1.0 if j == 0 else float(np.exp(b[p+j-1]))})
+            rows.append({**row, '함종': cls, '학습척수': m.get('class_counts', {}).get(cls), 'Dt': 1.0 if j == 0 else float(np.exp(b[p+j-1]))})
     return pd.DataFrame(rows)
 
 def export(path, df, bundle):
@@ -211,7 +219,7 @@ def template(path):
                  '속력은 기록용이며 현재 회귀식에는 사용하지 않습니다.',
                  '0 또는 결측 SWBS 중량은 학습할 수 없습니다.',
                  '초계함·초계정은 호위함과 통합 학습합니다.',
-                 '신규 함정은 GUI에서 직접 입력하거나 기본 제원 8개 열의 엑셀을 일괄 업로드하세요.']:
+                 '신규 함정은 GUI의 설계 제원 입력란에서 직접 입력하세요.']:
         guide.append([text])
     for sheet in wb:
         sheet.sheet_properties.tabColor = '087F87'
@@ -226,3 +234,109 @@ def template(path):
         row[0].alignment = Alignment(wrap_text=True, vertical='top')
         guide.row_dimensions[row[0].row].height = 110
     wb.save(path)
+
+
+MODEL_TERMS = ['LBD', 'LB', 'L', 'P', 'PE', 'year']
+
+def save_model_excel(path, bundle):
+    """Write a human-readable model; these tables are the actual loadable data."""
+    parameters, types, ranges, diagnostics = [], [], [], []
+    for name, m in bundle['models'].items():
+        nterms = len(m['terms'])
+        parameters.append({'Target': name, 'K': float(np.exp(m['coef'][0])), 'C': m['smearing'],
+                           'Terms': ','.join(m['terms']), 'MeanYear': m['mean_year'],
+                           'ReferenceType': m['classes'][0], 'N': m['n'], 'Parameters': m['parameters'],
+                           'RMSE_tonne': m['rmse_tonne'], 'MAPE_percent': m['mape_percent'],
+                           'R2': m['r2'], 'ConditionNumber': m['condition_number'],
+                           **{t: float(v) for t, v in zip(m['terms'], m['coef'][1:1+nterms])}})
+        for j, c in enumerate(m['classes']):
+            types.append({'Target': name, 'ShipType': c, 'Count': m.get('class_counts', {}).get(c),
+                          'Dt': 1.0 if j==0 else float(np.exp(m['coef'][1+nterms+j-1]))})
+        for c, bounds in m['ranges'].items():
+            ranges.append({'Target': name, 'Variable': c, 'Min': bounds[0], 'Max': bounds[1]})
+        diagnostics += [{'Target': name, **row} for row in m.get('diagnostics', [])]
+    with pd.ExcelWriter(path, engine='openpyxl') as writer:
+        pd.DataFrame(parameters).to_excel(writer, sheet_name='Model Parameters', index=False)
+        pd.DataFrame(types).to_excel(writer, sheet_name='Ship Types', index=False)
+        pd.DataFrame(ranges).to_excel(writer, sheet_name='Ranges', index=False)
+        coefficients(bundle).to_excel(writer, sheet_name='회귀계수 보기', index=False)
+        pd.DataFrame(diagnostics, columns=['Target','엑셀 행','함종','실제중량','예측중량','잔차','오차율(%)','Dt']).to_excel(writer, sheet_name='Diagnostics', index=False)
+        pd.DataFrame(bundle.get('excluded_rows', []), columns=['엑셀 행','함종','제외 사유']).to_excel(writer, sheet_name='Excluded Rows', index=False)
+        pd.DataFrame({'Note': ['Naval Ship Weight Estimator / Excel Model v1',
+                              'Model Parameters, Ship Types, Ranges are the data used when loading this model.',
+                              'K and C are separate. The reference ship type has Dt=1.',
+                              'R2, RMSE and diagnostics describe the original training fit; editing coefficients does not recompute them.',
+                              '기준 함종은 유효 학습 척수가 가장 많은 함종입니다. 동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.',
+                              '회귀계수 보기 시트는 열람용입니다. 모델을 변경하려면 재학습 후 저장을 권장합니다.'] + bundle.get('warnings', [])}).to_excel(writer, sheet_name='Notes', index=False)
+        pd.DataFrame([{'Format': 'NSWE Excel Model', 'Version': 1}]).to_excel(writer, sheet_name='Format', index=False)
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+    wb = load_workbook(path)
+    for ws in wb:
+        ws.freeze_panes = 'A2'; ws.auto_filter.ref = ws.dimensions
+        for col in ws.columns: ws.column_dimensions[col[0].column_letter].width = 20
+        for cell in ws[1]:
+            cell.font = Font(name='Times New Roman', size=10, bold=True, color='FFFFFF')
+            cell.fill = PatternFill('solid', fgColor='102638')
+    wb.save(path)
+
+def load_model_excel(path):
+    """Load only explicit spreadsheet tables, never executable serialization."""
+    try:
+        with pd.ExcelFile(path, engine='openpyxl') as book:
+            meta = pd.read_excel(book, sheet_name='Format')
+            if len(meta)!=1 or meta.iloc[0]['Format']!='NSWE Excel Model' or meta.iloc[0]['Version']!=1:
+                raise ValueError('지원하지 않는 모델 형식입니다.')
+            params = pd.read_excel(book, sheet_name='Model Parameters')
+            types = pd.read_excel(book, sheet_name='Ship Types')
+            ranges = pd.read_excel(book, sheet_name='Ranges')
+            diagnostics = pd.read_excel(book, sheet_name='Diagnostics')
+            excluded = pd.read_excel(book, sheet_name='Excluded Rows').fillna('').to_dict('records')
+            notes = pd.read_excel(book, sheet_name='Notes')['Note'].dropna().astype(str).tolist()[6:]
+        expected = set(WEIGHTS + ['총중량_독립회귀'])
+        if params.empty or params['Target'].duplicated().any() or not set(WEIGHTS)<=set(params['Target']) or not set(params['Target'])<=expected:
+            raise ValueError('계열별 모델 목록이 잘못되었습니다.')
+        def finite(value, name, positive=False):
+            v = float(value)
+            if not np.isfinite(v) or (positive and v<=0): raise ValueError(name+' 값이 유효하지 않습니다.')
+            return v
+        def integer(value, name):
+            v=finite(value,name,True)
+            if v%1: raise ValueError(name+'은 양의 정수여야 합니다.')
+            return int(v)
+        models = {}
+        for _, row in params.iterrows():
+            name=row['Target']; terms=str(row['Terms']).split(',')
+            wanted = TERMS[int(name[4:])] if name in WEIGHTS else ['LBD','P','year']
+            if terms!=wanted: raise ValueError(name+' 설명변수 목록이 다릅니다.')
+            group=types[types['Target']==name]
+            if group.empty or group['ShipType'].duplicated().any() or not set(group['ShipType'])<=set(SHIP_TYPES): raise ValueError('함종 목록이 잘못되었습니다.')
+            ref=row['ReferenceType']
+            if ref not in set(group['ShipType']): raise ValueError('기준 함종이 없습니다.')
+            classes=[ref]+[c for c in group['ShipType'] if c!=ref]
+            dt={r['ShipType']: finite(r['Dt'],'Dt',True) for _,r in group.iterrows()}
+            if not np.isclose(dt[ref],1): raise ValueError('기준 함종의 Dt는 1이어야 합니다.')
+            coef=[float(np.log(finite(row['K'],'K',True)))]+[finite(row[t],t) for t in terms]+[float(np.log(dt[c])) for c in classes[1:]]
+            bounds={}
+            rgroup=ranges[ranges['Target']==name]
+            if rgroup['Variable'].duplicated().any():raise ValueError('학습 범위가 중복되었습니다.')
+            for _,r in rgroup.iterrows():
+                lo,hi=finite(r['Min'],'Min'),finite(r['Max'],'Max')
+                if lo>hi:raise ValueError('학습 범위의 최소·최대값이 잘못되었습니다.')
+                bounds[r['Variable']]=[lo,hi]
+            if set(bounds)!=set(BASE[1:]):raise ValueError('학습 범위가 누락되었습니다.')
+            counts={r['ShipType']: integer(r['Count'],'Count') for _,r in group.iterrows() if pd.notna(r['Count'])}
+            models[name]={'target': '총중량' if name=='총중량_독립회귀' else name,
+                          'terms':terms, 'classes':classes, 'coef':coef, 'smearing':finite(row['C'],'C',True),
+                          'mean_year':finite(row['MeanYear'],'MeanYear'), 'ranges':bounds,
+                          'n':integer(row['N'],'N'), 'parameters':integer(row['Parameters'],'Parameters'),
+                          'rmse_tonne':finite(row['RMSE_tonne'],'RMSE'), 'mape_percent':finite(row['MAPE_percent'],'MAPE'),
+                          'r2':None if pd.isna(row['R2']) else finite(row['R2'],'R2'),
+                          'condition_number':finite(row['ConditionNumber'],'ConditionNumber',True),
+                          'class_counts':counts,
+                          'diagnostics':diagnostics[diagnostics['Target']==name].drop(columns='Target').to_dict('records')}
+        bundle={'version':3,'models':models,'warnings':notes,'excluded_rows':excluded}
+        validate_model_types(bundle)
+        return bundle
+    except (KeyError, TypeError, IndexError) as e:
+        raise ValueError('모델 엑셀의 필수 시트 또는 열이 잘못되었습니다. Save Regression Model로 저장한 파일을 선택하세요.') from e

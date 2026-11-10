@@ -1,12 +1,11 @@
 """Naval Ship Weight Estimator — native Windows desktop interface."""
-import json
 import threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
-                   coefficients, validate_model_types, normalize_types)
+                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel)
 
 TITLE = 'Naval Ship Weight Estimator(Total & Series)'
 NAVY, INK, TEAL, GOLD = '#102638', '#19384a', '#087f87', '#c69c55'
@@ -42,7 +41,7 @@ class App:
         self.design_tab = tk.Frame(self.notebook, bg=WHITE)
         self.model_tab = tk.Frame(self.notebook, bg=WHITE)
         self.notebook.add(self.design_tab, text='Design & Weight Estimation')
-        self.notebook.add(self.model_tab, text='Regression Model & Coefficients')
+        self.notebook.add(self.model_tab, text='Regression Results')
         self.design_panel(); self.model_panel()
 
     def label(self, parent, text, size=11, color=INK, bg=WHITE, bold=False, english=False):
@@ -52,7 +51,7 @@ class App:
         button = tk.Button(parent, text=text, command=lambda: self.safe(action), font=(EN, 11, 'bold'),
                            bg=TEAL if primary else '#e4edf2', fg=WHITE if primary else INK,
                            activebackground='#116d76' if primary else '#cfdee7', activeforeground=WHITE if primary else INK,
-                           relief='raised', bd=3, cursor='hand2', padx=12, pady=9)
+                           relief='raised', bd=3, cursor='hand2', padx=12, pady=7)
         return button
 
     def header(self):
@@ -84,19 +83,20 @@ class App:
         for x in [57,83,327,355]: c.create_line(x,102,x,111,fill='#92b6c4')
 
     def sidebar(self, p):
-        inner = tk.Frame(p, bg=NAVY, padx=18, pady=20); inner.pack(fill='both', expand=True)
+        inner = tk.Frame(p, bg=NAVY, padx=18, pady=14); inner.pack(fill='both', expand=True)
         self.label(inner, '01  /  REFERENCE FLEET', 13, GOLD, NAVY, True, True).pack(anchor='w')
         self.label(inner, '실적함 데이터 · 자동 회귀 학습', 10, '#d2e1e8', NAVY).pack(anchor='w', pady=(6,12))
         self.button(inner, 'Download Input File Template', self.make_template).pack(fill='x', pady=5)
         self.button(inner, 'Input File Upload', self.fit, True).pack(fill='x', pady=5)
         self.fleet_info = tk.StringVar(value='아직 학습된 모델이 없습니다.')
-        tk.Label(inner, textvariable=self.fleet_info, wraplength=245, justify='left', bg=NAVY, fg='#b8cdd8', font=(KO,10)).pack(anchor='w', pady=12)
-        self.label(inner, '02  /  MODEL LIBRARY', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(18,8))
+        tk.Label(inner, textvariable=self.fleet_info, wraplength=245, justify='left', bg=NAVY, fg='#b8cdd8', font=(KO,10)).pack(anchor='w', pady=7)
+        self.label(inner, '02  /  REGRESSION', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
+        self.button(inner, 'View Regression Results', self.open_regression).pack(fill='x', pady=4)
+        self.label(inner, '03  /  MODEL LIBRARY', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'Save Regression Model', self.save).pack(fill='x', pady=5)
         self.button(inner, 'Load Regression Model', self.load).pack(fill='x', pady=5)
-        self.label(inner, '03  /  REPORTS', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(22,8))
+        self.label(inner, '04  /  REPORTS', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'Export Results to Excel', self.report).pack(fill='x', pady=5)
-        self.button(inner, 'Batch Design File Upload', self.forecast).pack(fill='x', pady=5)
         tk.Label(inner, text='기존 + 추가 자료를 합쳐 재업로드\n초계함·초계정 → 호위함 계수\n중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=10)
 
     def design_panel(self):
@@ -140,17 +140,92 @@ class App:
         for c,w in zip(cols,widths): tree.heading(c,text=c); tree.column(c,width=w,minwidth=60,anchor='w' if c==cols[1] else 'center')
         return tree
 
+    def open_regression(self):
+        self.notebook.select(self.model_tab)
+
+    def scroll_table(self, parent, columns, widths, height=8):
+        frame=tk.Frame(parent,bg=WHITE); frame.pack(fill='both',expand=True)
+        tree=self.table(frame,columns,widths);tree.configure(height=height)
+        sy=ttk.Scrollbar(frame,orient='vertical',command=tree.yview)
+        sx=ttk.Scrollbar(frame,orient='horizontal',command=tree.xview)
+        tree.configure(yscrollcommand=sy.set,xscrollcommand=sx.set)
+        sy.pack(side='right',fill='y');sx.pack(side='bottom',fill='x');tree.pack(fill='both',expand=True)
+        return tree
+
     def model_panel(self):
-        p=tk.Frame(self.model_tab,bg=WHITE,padx=20,pady=18); p.pack(fill='both',expand=True)
-        self.label(p,'Regression Model & Coefficients',21,bold=True,english=True).pack(anchor='w')
-        self.label(p,'C(역변환 편향 보정)는 K와 구분하여 적용합니다. 아래 적합도는 학습자료 기준입니다.',10,MUTED).pack(anchor='w',pady=8)
-        self.metric_tree=self.table(p,['Target','Ships','RMSE (tonne)','MAPE (%)','R²'],[180,70,150,130,120]); self.metric_tree.pack(fill='x',pady=8)
-        box=tk.Frame(p,bg=WHITE); box.pack(fill='both',expand=True)
-        self.log=tk.Text(box,wrap='none',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
-        sy=ttk.Scrollbar(box,orient='vertical',command=self.log.yview); sx=ttk.Scrollbar(box,orient='horizontal',command=self.log.xview)
-        self.log.configure(yscrollcommand=sy.set,xscrollcommand=sx.set)
-        sy.pack(side='right',fill='y'); sx.pack(side='bottom',fill='x'); self.log.pack(fill='both',expand=True)
-        self.show('Input File Upload로 전체 실적함 엑셀을 선택하면 자동으로 회귀계수를 추정합니다.\n\nWtotal = K (LBD)^α P^β Dt exp[γ(Y−Ȳ)/10] C\n\n실제 함정 데이터로 학습하기 전에는 예측값을 표시하지 않습니다.')
+        p=tk.Frame(self.model_tab,bg=WHITE,padx=18,pady=15);p.pack(fill='both',expand=True)
+        self.label(p,'Regression Results',21,bold=True,english=True).pack(anchor='w')
+        self.regression_summary=tk.StringVar(value='전체 실적함 파일을 업로드하면 회귀 결과가 표시됩니다.')
+        tk.Label(p,textvariable=self.regression_summary,bg=WHITE,fg=MUTED,font=(KO,10),anchor='w',justify='left',wraplength=940).pack(fill='x',pady=7)
+        select=tk.Frame(p,bg=WHITE);select.pack(fill='x',pady=5)
+        self.label(select,'Analysis Target',12,bold=True,english=True).pack(side='left',padx=(0,12))
+        self.reg_target=tk.StringVar(value='SWBS100')
+        self.reg_selector=ttk.Combobox(select,textvariable=self.reg_target,state='readonly',width=23,values=[])
+        self.reg_selector.pack(side='left');self.reg_selector.bind('<<ComboboxSelected>>',lambda e:self.update_diagnostics())
+        self.reg_stats=tk.StringVar(value='R² / RMSE / MAPE —')
+        tk.Label(select,textvariable=self.reg_stats,bg=WHITE,fg=TEAL,font=(EN,11,'bold')).pack(side='left',padx=12)
+        tabs=ttk.Notebook(p);tabs.pack(fill='both',expand=True,pady=(8,0))
+        overview=tk.Frame(tabs,bg=WHITE);coefs=tk.Frame(tabs,bg=WHITE);ships=tk.Frame(tabs,bg=WHITE)
+        stats=tk.Frame(tabs,bg=WHITE);notes=tk.Frame(tabs,bg=WHITE)
+        for frame,title in [(overview,'Graphs'),(coefs,'Coefficients'),(ships,'Ship Diagnostics'),(stats,'Fit Statistics'),(notes,'Notes')]:tabs.add(frame,text=title)
+        self.reg_graph=tk.Canvas(overview,bg='#f3f7fa',height=320,highlightthickness=0)
+        self.reg_graph.pack(fill='both',expand=True,pady=8)
+        self.reg_graph.bind('<Configure>',lambda e:self.draw_regression_graphs())
+        self.label(overview,'왼쪽: 실제·예측 중량(tonne) / 오른쪽: 예측 중량 대비 오차율(%)',9,MUTED).pack(anchor='w',pady=3)
+        self.label(overview,'점 위에 마우스를 올리면 엑셀 행·함종·Dt·중량·오차를 확인할 수 있습니다. 적합도는 학습자료 기준입니다.',9,MUTED).pack(anchor='w',pady=3)
+        self.graph_hover=tk.StringVar(value='실적함 데이터를 학습하거나 모델 엑셀을 불러오세요.')
+        tk.Label(overview,textvariable=self.graph_hover,bg=WHITE,fg=INK,font=(KO,9),anchor='w',wraplength=930).pack(fill='x',pady=4)
+        cols=['계열','함종','학습척수','기준함종','Dt','K','C','LBD','LB','L','P','PE','γ','기준연도']
+        self.coeff_tree=self.scroll_table(coefs,cols,[160,85,75,85,100,120,100,100,100,100,100,100,100,100])
+        self.ship_tree=self.scroll_table(ships,['Excel Row','Ship Type','Dt','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,95,95,135,135,130,110])
+        self.metric_tree=self.scroll_table(stats,['Target','Ships','RMSE (tonne)','MAPE (%)','R²','Parameters','Condition'],[180,65,135,100,100,90,120])
+        self.log=tk.Text(notes,wrap='word',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
+        sy=ttk.Scrollbar(notes,orient='vertical',command=self.log.yview);self.log.configure(yscrollcommand=sy.set)
+        sy.pack(side='right',fill='y');self.log.pack(fill='both',expand=True)
+        self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계함·초계정의 호위함 통합 후 척수가 가장 많은 함종입니다.\n동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
+
+    def update_diagnostics(self):
+        if not self.bundle:return
+        model=self.bundle['models'].get(self.reg_target.get())
+        if not model:return
+        r='—' if model['r2'] is None else f"{model['r2']:.4f}"
+        self.reg_stats.set(f"R² {r}   RMSE {model['rmse_tonne']:,.2f} t   MAPE {model['mape_percent']:.2f}%")
+        self.ship_tree.delete(*self.ship_tree.get_children())
+        for d in model.get('diagnostics',[]):
+            self.ship_tree.insert('','end',values=(d['엑셀 행'],d['함종'],f"{d['Dt']:.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"))
+        self.draw_regression_graphs()
+
+    def draw_regression_graphs(self):
+        c=self.reg_graph;c.delete('all')
+        w,h=max(c.winfo_width(),700),max(c.winfo_height(),220)
+        if not self.bundle:return
+        rows=self.bundle['models'].get(self.reg_target.get(),{}).get('diagnostics',[])
+        if not rows:
+            c.create_text(w/2,h/2,text='No training diagnostics available',font=(EN,15),fill=MUTED);return
+        actual=[float(r['실제중량']) for r in rows];predicted=[float(r['예측중량']) for r in rows]
+        errors=[float(r['오차율(%)']) for r in rows]
+        max_weight=max(actual+predicted)*1.05 or 1
+        max_error=max(max(abs(e) for e in errors)*1.15,1)
+        for side in range(2):
+            left=62+side*w/2;right=(side+1)*w/2-25;top=46;bottom=h-48
+            c.create_text((left+right)/2,18,text='ACTUAL vs PREDICTED' if side==0 else 'RELATIVE ERROR vs PREDICTED',font=(EN,12,'bold'),fill=INK)
+            c.create_line(left,top,left,bottom,right,bottom,fill=MUTED)
+            for j in range(5):
+                f=j/4;y=bottom-f*(bottom-top);x=left+f*(right-left)
+                c.create_line(left,y,right,y,fill='#dce6ec')
+                c.create_text(left-7,y,anchor='e',text=f'{max_weight*f:.3g}' if side==0 else f'{(2*f-1)*max_error:.2g}',font=(EN,9),fill=MUTED)
+                c.create_text(x,bottom+12,text=f'{max_weight*f:.3g}',font=(EN,9),fill=MUTED)
+            c.create_text((left+right)/2,h-12,text='Actual (tonne)' if side==0 else 'Predicted (tonne)',font=(EN,11),fill=INK)
+            c.create_text(left-44,(top+bottom)/2,text='Predicted (t)' if side==0 else 'Error (%)',angle=90,font=(EN,10),fill=INK)
+            if side==0:c.create_line(left,bottom,right,top,fill=GOLD,width=2,dash=(5,3))
+            else:c.create_line(left,(top+bottom)/2,right,(top+bottom)/2,fill=GOLD,width=2,dash=(5,3))
+            for i,d in enumerate(rows):
+                x=left+(actual[i] if side==0 else predicted[i])/max_weight*(right-left)
+                fraction=predicted[i]/max_weight if side==0 else (errors[i]+max_error)/(2*max_error)
+                y=bottom-fraction*(bottom-top)
+                point=c.create_oval(x-3,y-3,x+3,y+3,fill=TEAL,outline=WHITE)
+                message=f"Excel {d['엑셀 행']}행 / {d['함종']} / Dt {d['Dt']:.5g} / 실제 {d['실제중량']:,.2f} t / 예측 {d['예측중량']:,.2f} t / 오차 {d['오차율(%)']:.2f}%"
+                c.tag_bind(point,'<Enter>',lambda e,t=message:self.graph_hover.set(t))
 
     def draw_chart(self):
         c=self.chart; c.delete('all'); width=max(c.winfo_width(),240)
@@ -174,7 +249,7 @@ class App:
         except Exception as e: messagebox.showerror('처리 실패',str(e))
     def choose(self,save=False,ext='.xlsx',initialfile=None):
         fn=filedialog.asksaveasfilename if save else filedialog.askopenfilename
-        options = dict(defaultextension=ext,filetypes=[('Excel' if ext=='.xlsx' else 'Model JSON','*'+ext)])
+        options = dict(defaultextension=ext,filetypes=[('Excel Workbook','*.xlsx')])
         if initialfile is not None: options['initialfile'] = initialfile
         return fn(**options)
     def require(self):
@@ -209,34 +284,40 @@ class App:
         self.result_tree.delete(*self.result_tree.get_children());self.draw_chart()
         self.prediction_note.set('새 모델이 적용되었습니다. 설계 제원을 입력하고 Estimate Ship Weight를 누르세요.')
     def refresh_model(self,source):
-        m=self.bundle['models']['SWBS100']
-        self.fleet_info.set(f"{source}\n학습자료 {m['n']}척 / {len(m['classes'])}개 함종\n"+', '.join(m['classes']))
-        self.metric_tree.delete(*self.metric_tree.get_children())
-        for n,x in self.bundle['models'].items():
+        import math
+        m=self.bundle['models']['SWBS100'];ref=m['classes'][0]
+        self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
+        self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 함종입니다. C는 K와 별도 적용합니다.")
+        self.metric_tree.delete(*self.metric_tree.get_children());self.coeff_tree.delete(*self.coeff_tree.get_children())
+        for name,x in self.bundle['models'].items():
             r='—' if x['r2'] is None else f"{x['r2']:.4f}"
-            self.metric_tree.insert('','end',values=(n,x['n'],f"{x['rmse_tonne']:,.2f}",f"{x['mape_percent']:.2f}",r))
-        text=['학습 적합도는 신규 함급 검증 성능이 아닙니다.','K / 회귀지수 / 함종별 Dt / 기준연도 / 역변환 보정계수 C를 아래에 표시합니다.']+self.bundle['warnings']
-        for n,m in self.bundle['models'].items():
-            coef=m['coef'];terms=m['terms']; p=1+len(terms)
-            import math
-            text.extend(['',f'[{n}]',f"K = {math.exp(coef[0]):.8g}    C = {m['smearing']:.8g}    기준연도 = {m['mean_year']:.4f}",
-                         '   '.join(f'{t} 계수 = {v:.8g}' for t,v in zip(terms,coef[1:p])),
-                         '   '.join(f'Dt({c}) = {1.0 if j==0 else math.exp(coef[p+j-1]):.8g}' for j,c in enumerate(m['classes'])),
-                         f"조건수 = {m['condition_number']:.2f}"])
-            if n=='총중량_독립회귀' and 'P' not in terms:text.append('이전 모델: 소요마력 미포함. 새 식을 적용하려면 다시 학습하세요.')
-        self.show('\n'.join(text))
+            self.metric_tree.insert('','end',values=(name,x['n'],f"{x['rmse_tonne']:,.3f}",f"{x['mape_percent']:.3f}",r,x['parameters'],f"{x['condition_number']:.2f}"))
+            terms=dict(zip(x['terms'],x['coef'][1:1+len(x['terms'])]));offset=1+len(x['terms'])
+            for j,cls in enumerate(x['classes']):
+                values=[name,cls,x.get('class_counts',{}).get(cls,'—'),x['classes'][0],
+                        f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
+                values += [f"{terms[t]:.8g}" if t in terms else '—' for t in ['LBD','LB','L','P','PE','year']]
+                self.coeff_tree.insert('','end',values=values+[f"{x['mean_year']:.4f}"])
+        self.reg_selector.configure(values=list(self.bundle['models']))
+        if self.reg_target.get() not in self.bundle['models']:self.reg_target.set('SWBS100')
+        self.update_diagnostics()
+        self.show('\n'.join(['기준 함종 / Reference: '+ref,
+                   '유효 학습 척수 / Valid ships: '+str(m['n']),
+                   'Dt는 기준 함종을 1로 한 함종별 상대 계수입니다.',
+                   '계수 표의 LBD/LB/L/P/PE 열은 해당 변수의 회귀지수이며 γ는 10년당 연도 효과입니다.',
+                   '함정별 Dt는 Ship Diagnostics에서 확인합니다. 척별 독립 계수를 따로 학습하지 않습니다.',
+                   '잔차 = 실제−예측, 오차율 = (예측−실제)/실제 × 100.',
+                   'R²·RMSE·MAPE 및 그래프는 학습자료 기준이며 독립 검증 성능이 아닙니다.',
+                   '엑셀 모델에는 전체 정밀도의 계수·학습 범위·진단 결과가 저장됩니다.']+self.bundle.get('warnings',[])))
     def save(self):
-        self.require();p=self.choose(True,'.json')
-        if p:
-            with open(p,'w',encoding='utf-8') as f:json.dump(self.bundle,f,ensure_ascii=False,indent=2,allow_nan=False)
-            self.status.set('MODEL SAVED  |  '+p)
+        self.require();p=self.choose(True,initialfile='Regression Model.xlsx')
+        if p:save_model_excel(p,self.bundle);self.status.set('MODEL SAVED  |  '+p)
     def load(self):
-        p=self.choose(False,'.json')
+        p=self.choose()
         if not p:return
-        with open(p,encoding='utf-8') as f:b=json.load(f)
-        if b.get('version') not in (1,2) or not all('SWBS'+str(i) in b.get('models',{}) for i in range(100,800,100)):raise ValueError('지원하지 않는 모델 파일입니다.')
-        validate_model_types(b);self.bundle,self.data=b,None;self.clear_prediction();self.refresh_model(Path(p).name)
-        self.status.set('MODEL LOADED  |  신규 설계함 예측 가능')
+        bundle=load_model_excel(p)
+        self.bundle,self.data=bundle,None;self.clear_prediction();self.refresh_model(Path(p).name)
+        self.notebook.select(self.model_tab);self.status.set('EXCEL MODEL LOADED  |  신규 설계함 예측 가능')
     def design_data(self):
         row={}
         for key,var in self.inputs.items():
@@ -261,12 +342,6 @@ class App:
         note=f"적용 함종: {row['함분류']}  |  "+(row['주의'] or '학습자료의 입력 범위 내')
         if key not in row:note+='  |  실제 총중량을 포함한 실적함 자료를 학습하면 직접 회귀를 사용할 수 있습니다.'
         self.prediction_note.set(note);self.draw_chart()
-    def forecast(self):
-        self.require();p=self.choose()
-        if not p:return
-        data=read_excel(p,training=False);result=predict(data,self.bundle);self.data=data
-        self.render_result(result.iloc[0]);self.notebook.select(self.design_tab)
-        self.status.set(f'BATCH READY  |  {len(data)}척 예측 완료, 빈 값·오류 {len(data.attrs.get("excluded_rows", []))}척 제외. 화면은 첫 함정, 엑셀은 전체 함정 결과입니다.')
     def report(self):
         self.require()
         if self.data is None:raise ValueError('학습 또는 예측을 먼저 실행하세요.')
