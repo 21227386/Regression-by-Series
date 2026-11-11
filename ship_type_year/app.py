@@ -10,8 +10,9 @@ from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from year_search import SCALES,MAX_PERCENT
 from training_job import start_regression
+from results_export import save_regression_results
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
-                   coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics, formula_text)
+                   coefficients, validate_model_types, normalize_types, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics, formula_text)
 
 TARGET_NAMES={'SWBS100':'Hull Structure','SWBS200':'Propulsion Plant','SWBS300':'Electric Plant',
               'SWBS400':'Command & Surveillance','SWBS500':'Auxiliary Systems','SWBS600':'Outfit & Furnishings',
@@ -576,10 +577,10 @@ class App:
                    '100계열의 LBD 열은 함종별 αt이며, 기준LBD로 나눈 규모 비율에 적용합니다. 함정별 Dt는 Ship Diagnostics에서 확인합니다. 척별 독립 계수를 따로 학습하지 않습니다.',
                    '잔차 = 실제−예측, 오차율 = (예측−실제)/실제 × 100.',
                    'R²·RMSE·MAPE 및 그래프는 학습자료 기준이며 독립 검증 성능이 아닙니다.',
-                   '엑셀 모델에는 전체 정밀도의 계수·학습 범위·진단 결과가 저장됩니다.']+self.bundle.get('warnings',[])))
+                   'Save Regression Model은 중량 비교·최종 수식·계수·적합도 요약을 결과용 엑셀로 저장합니다.']+self.bundle.get('warnings',[])))
     def save(self):
-        self.require();p=self.choose(True,initialfile='Commissioning Year Adjustment by Ship Type Excluding 700 Model.xlsx')
-        if p:save_model_excel(p,self.bundle);self.status.set('MODEL SAVED  |  '+p)
+        self.require();p=self.choose(True,initialfile='Regression Results.xlsx')
+        if p:save_regression_results(p,self.bundle);self.status.set('REGRESSION RESULTS SAVED  |  '+p)
     def load(self):
         p=self.choose()
         if not p:return

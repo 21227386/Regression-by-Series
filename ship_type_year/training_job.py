@@ -58,7 +58,11 @@ def verify_worker(output):
                 elif msg[0]=='result':
                     if not progress or len(msg[2]['models'])!=7:raise RuntimeError('Incomplete regression output')
                     if any(m['class_counts'].get('초계함')!=1 or abs(m['diagnostics'][-1]['오차율(%)'])>1e-7 for m in msg[2]['models'].values()):raise RuntimeError('Patrol model did not survive worker transfer')
-                    Path(output).write_text('spawned regression worker verified',encoding='utf-8');return
+                    from results_export import save_regression_results,SHEETS
+                    report=Path(output).with_suffix('.xlsx');save_regression_results(report,msg[2])
+                    with pd.ExcelFile(report) as book:
+                        if book.sheet_names!=SHEETS:raise RuntimeError('Unexpected result workbook sheets')
+                    Path(output).write_text('spawned regression worker and compact results export verified',encoding='utf-8');return
             raise TimeoutError('Regression worker timeout')
         finally:
             process.join(timeout=5)

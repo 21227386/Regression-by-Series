@@ -72,6 +72,16 @@ class UITests(unittest.TestCase):
                 p=Path(tmp)/'result.xlsx'
                 with patch.object(app,'choose',return_value=str(p)),patch('app.messagebox.showinfo'):app.report()
                 self.assertTrue(p.exists())
+                p=Path(tmp)/'Regression Results.xlsx'
+                app.ship_filter.set('초계함');app.update_diagnostics()
+                with patch.object(app,'choose',return_value=str(p)):app.save()
+                from openpyxl import load_workbook
+                from results_export import SHEETS
+                wb=load_workbook(p)
+                self.assertEqual(wb.sheetnames,SHEETS)
+                self.assertEqual(wb['중량 비교'].max_row,1+len(df)*7)
+                wb.close()
+                app.ship_filter.set('All Ship Types');app.update_diagnostics()
                 app.open_guide();root.update()
                 self.assertEqual(len(app.final_formula_images),7)
                 captions=[w.cget('text') for w in app.final_body.winfo_children() if isinstance(w,tk.Label)]
