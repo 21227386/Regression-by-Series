@@ -28,7 +28,7 @@ class App:
         self.root, self.bundle, self.data = root, None, None
         self.busy = False
         self.final_formula_key=None
-        root.title(TITLE); root.geometry('1380x900'); root.minsize(1180, 800)
+        root.title(TITLE); root.geometry('1380x940'); root.minsize(1180, 800)
         root.configure(bg=BG)
         root.option_add('*Font', (KO, 10))
         style = ttk.Style(root); style.theme_use('clam')

@@ -12,7 +12,7 @@ from test_model import fleet
 @unittest.skipUnless(sys.platform=='win32' or os.environ.get('DISPLAY'),'Desktop display required')
 class UITests(unittest.TestCase):
     def test_ship_type_year_gui(self):
-        root=tk.Tk();app=App(root);root.geometry('1380x900+0+0');root.update()
+        root=tk.Tk();app=App(root);root.geometry('1380x940+0+0');root.update()
         self.assertLessEqual(app.header_description.winfo_rooty()+app.header_description.winfo_height(),app.header_frame.winfo_rooty()+app.header_frame.winfo_height()-4)
         try:
             with tempfile.TemporaryDirectory() as tmp:
