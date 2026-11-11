@@ -15,7 +15,8 @@ class UITests(unittest.TestCase):
         root=tk.Tk();app=App(root);root.geometry('1380x900+0+0');root.update()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                df=fleet();p=Path(tmp)/'fleet.xlsx';df.to_excel(p,index=False)
+                from test_patrol import with_patrol
+                df=with_patrol(1);p=Path(tmp)/'fleet.xlsx';df.to_excel(p,index=False)
                 with patch.object(app,'choose',return_value=str(p)):app.fit()
                 self.assertTrue(app.analysis_dialog.winfo_exists())
                 deadline=time.monotonic()+120
@@ -25,6 +26,8 @@ class UITests(unittest.TestCase):
                 self.assertEqual(len(app.search_tree.get_children()),201)
                 self.assertFalse(hasattr(app,'comparison_tree'))
                 self.assertNotIn('초계정',app.ship_type_entry['values'])
+                self.assertEqual(list(app.ship_type_entry['values']).count('초계함'),1)
+                self.assertEqual(app.bundle['models']['SWBS100']['class_counts']['초계함'],1)
                 self.assertEqual(app.reg_target.get(),'SWBS100')
                 self.assertEqual(app.wape_initial.get(),'10')
                 self.assertIn('WAPE',app.reg_stats.get())

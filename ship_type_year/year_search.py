@@ -8,6 +8,9 @@ def metrics(actual,predicted):
     return {'mape':float(np.mean(abs((predicted-actual)/actual))*100),'wape':float(np.sum(abs(predicted-actual))/np.sum(actual)*100),'rmse':float(np.sqrt(np.mean((predicted-actual)**2)))}
 
 def refit_scale(df,base,q,diagnostics=True):
+    if base.get('_patrol_core') is not None:
+        from patrol import refit
+        return refit(df,base,q,diagnostics)
     if base.get('kind')=='additive':
         from additive import refit
         return refit(df,base,q,diagnostics)

@@ -45,6 +45,9 @@ def apply_result(base,result,scales,p,gamma):
 
 
 def fit_baseline(df,target,terms):
+    if (df['함분류']=='초계함').any():
+        from patrol import fit
+        return fit(df,target,terms,additive=True)
     from model import BASE,SHIP_TYPES
     counts=df['함분류'].value_counts()
     classes=sorted(counts.index.tolist(),key=lambda c:(-int(counts[c]),SHIP_TYPES.index(c)))

@@ -112,7 +112,7 @@ class App:
         self.button(inner, 'Open Weight Estimation', self.open_estimation, True).pack(fill='x', pady=3)
         self.label(inner, '4  /  Reports', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'Export Results to Excel', self.report).pack(fill='x', pady=3)
-        tk.Label(inner, text='기존 + 추가 자료를 합쳐 재업로드\n초계함·초계정 → 호위함 계수\n중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=5)
+        tk.Label(inner, text='기존 + 추가 자료를 합쳐 재업로드\n초계함 → 전용 Dt / 초계정 → 호위함\n중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=5)
 
     def design_panel(self):
         panel = tk.Frame(self.design_tab, bg=WHITE, padx=20, pady=15); panel.pack(fill='both', expand=True)
@@ -130,7 +130,7 @@ class App:
             self.label(cell, caption, 10, MUTED, english=True).pack(anchor='w')
             var=tk.StringVar(); self.inputs[key]=var
             if key=='함분류':
-                e=ttk.Combobox(cell,textvariable=var,values=SHIP_TYPES+['초계함'],state='readonly',width=15,font=(KO,11)); var.set('호위함');self.ship_type_entry=e
+                e=ttk.Combobox(cell,textvariable=var,values=SHIP_TYPES,state='readonly',width=15,font=(KO,11)); var.set('호위함');self.ship_type_entry=e
             else:
                 e=tk.Entry(cell,textvariable=var,font=(EN,14),bg='#f3f7fa',fg=INK,relief='sunken',bd=2,width=15)
             e.pack(fill='x',ipady=4,pady=(4,0))
@@ -240,7 +240,7 @@ class App:
         self.log=tk.Text(notes,wrap='word',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
         sy=ttk.Scrollbar(notes,orient='vertical',command=self.log.yview);self.log.configure(yscrollcommand=sy.set)
         sy.pack(side='right',fill='y');self.log.pack(fill='both',expand=True)
-        self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계함·초계정의 호위함 통합 후 척수가 가장 많은 함종입니다.\n동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
+        self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계정의 호위함 통합(초계함 별도) 후 척수가 가장 많은 비초계함 함종입니다.\n동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
 
     def build_guide(self,parent):
         canvas=tk.Canvas(parent,bg='#edf2f5',highlightthickness=0)
@@ -533,7 +533,7 @@ class App:
         m=self.bundle['models']['SWBS100'];ref=m['classes'][0]
         self.update_year_reference()
         self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
-        self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 함종입니다. C는 K와 별도 적용합니다.")
+        self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 비초계함 함종입니다. C는 K와 별도 적용합니다.")
         self.final_formula_key=None
         self.formula_selector.configure(values=m['classes'])
         if self.formula_ship.get() not in m['classes']:self.formula_ship.set(m['classes'][0])

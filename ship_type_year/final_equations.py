@@ -78,4 +78,5 @@ def variable_description(model,ship_type):
     if model.get('size_by_type'):rows.append('V0: 학습 LBD 기하평균(m³). 크기 지수는 선택한 함종의 값입니다.')
     rows.append('Dt: 기준 함종 대비 함종계수(무차원). Y: 취역(예상)연도(year). Ȳt: 선택 함종의 학습 평균연도.')
     rows.append('γt: 선택 비율을 이미 반영한 함종별 연도계수(10년 기준). C: 별도 역변환 편향 보정계수(마지막 배수).')
+    if ship_type=='초계함' and model.get('patrol_info'):rows.append(model['patrol_info']['note'])
     return '\n'.join(rows)

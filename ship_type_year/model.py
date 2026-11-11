@@ -21,8 +21,8 @@ YEAR_TARGETS = set(WEIGHTS) | {TOTAL_TARGET}
 ALIASES = {'총 중량': '총중량', '충중량': '총중량', '취취역연도': '취역연도',
            '함정분류': '함분류', '함종': '함분류', '함정번호': '순번', '번호': '순번'}
 
-SHIP_TYPES = ['구축함', '호위함', '고속함', '상륙함', '기뢰전함', '지원함']
-SHIP_ALIASES = {'초계함': '호위함', '초계정': '호위함'}
+SHIP_TYPES = ['구축함', '호위함', '고속함', '상륙함', '기뢰전함', '지원함', '초계함']
+SHIP_ALIASES = {'초계정': '호위함'}
 
 def normalize_types(df):
     out = df.copy()
@@ -33,7 +33,7 @@ def normalize_types(df):
     invalid = sorted(set(normalized) - set(SHIP_TYPES))
     if invalid:
         raise ValueError('지원하지 않는 함종: ' + ', '.join(invalid) +
-                         '. 허용 함종: ' + ', '.join(SHIP_TYPES) + ' (초계함·초계정은 호위함 적용)')
+                         '. 허용 함종: ' + ', '.join(SHIP_TYPES) + ' (초계함은 별도 함종, 초계정은 호위함 적용)')
     if '함분류_입력' not in out:
         out['함분류_입력'] = original
     out['함분류'] = normalized
@@ -178,6 +178,9 @@ def fit_hull_by_type(df):
             'mape_percent':float(np.mean(abs((actual-prediction)/actual))*100),'r2':None if den==0 else float(1-((actual-prediction)**2).sum()/den)}
 
 def fit_one(df, target, terms, hull_by_type=True):
+    if (df['함분류']=='초계함').any():
+        from patrol import fit
+        return fit(df,target,terms,hull=hull_by_type)
     if target=='SWBS100' and hull_by_type:return fit_hull_by_type(df)
     counts = df['함분류'].value_counts()
     classes = sorted(counts.index.tolist(), key=lambda c: (-int(counts[c]), SHIP_TYPES.index(c)))
@@ -316,6 +319,7 @@ def train(df,progress=None,compare=True,wape_limit_percent=10.0,auto_relax_wape=
         for e in comparisons:
             if e['계열']==name:e['선택']=e['candidate_id']==winner['candidate_id']
         if winner.get('year_unavailable_reason'):warnings.append(winner['year_unavailable_reason'])
+        if winner.get('patrol_info'):warnings.append(name+': '+winner['patrol_info']['note'])
     return {'version':4,'mode':'ship_type_year_exclude_700','models':models,'warnings':warnings,'excluded_rows':excluded,'formula_comparison':comparisons,'formula_searches':searches,'wape_config':{'initial_percent':wape_limit_percent,'auto_relax':auto_relax_wape,'step_percent':1}}
 
 def predict(df, bundle):
@@ -376,7 +380,7 @@ def template(path):
     units = ['식별번호', '함종', '함유형', 'year', 'm', 'm', 'm', 'hp', 'kW', 'kn'] + ['tonne'] * 8
     for cell, unit in zip(ws[1], units):
         cell.comment = Comment('단위: ' + unit + (' / SWBS700 포함 원래 경하중량. 프로그램이 SWBS700을 한 번 공제합니다.' if cell.value == HEADERS['총중량'] else ' / 공제용 실적 중량(0 허용). 예측하지 않습니다.' if cell.value==HEADERS['SWBS700'] else ''), 'Naval Ship Design')
-    validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPES + ['초계함','초계정']) + '"')
+    validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPES + ['초계정']) + '"')
     validation.errorTitle = '함종 확인'; validation.error = '목록에서 함종을 선택하세요.'
     validation.showErrorMessage = True; ws.add_data_validation(validation); validation.add('B2:B10000')
     ws.column_dimensions['A'].number_format = '@'
@@ -400,7 +404,7 @@ def save_model_excel(path, bundle):
     for name, m in bundle['models'].items():
         nterms = len(m['terms'])
         parameters.append({'Target': name, 'K': float(np.exp(m['coef'][0])), 'C': m['smearing'],
-                           'Kind':m.get('kind','power'),**{'Add_'+k:v for k,v in m.get('additive_coeff',{}).items()},'CandidateId':m.get('candidate_id','current'),'CandidateLabel':m.get('candidate_label','기존 식'),'SizeByType':m.get('size_by_type',False),'VolumeReference':m.get('volume_reference'), 'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'],'YearEstimated':m.get('year_estimated',True),'YearIssue':m.get('year_unavailable_reason',''), 'YearScale':m.get('year_scale'),
+                           'PatrolInfo':json.dumps(m.get('patrol_info',{}),ensure_ascii=False),'Kind':m.get('kind','power'),**{'Add_'+k:v for k,v in m.get('additive_coeff',{}).items()},'CandidateId':m.get('candidate_id','current'),'CandidateLabel':m.get('candidate_label','기존 식'),'SizeByType':m.get('size_by_type',False),'VolumeReference':m.get('volume_reference'), 'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'],'YearEstimated':m.get('year_estimated',True),'YearIssue':m.get('year_unavailable_reason',''), 'YearScale':m.get('year_scale'),
                            'ReferenceType': m['classes'][0], 'N': m['n'], 'Parameters': m['parameters'],
                            'RMSE_tonne': m['rmse_tonne'], 'MAPE_percent': m['mape_percent'],'WAPE_percent':m.get('wape_percent'),
                            'WAPE_Initial':m.get('selection',{}).get('wape_requested_percent'),'WAPE_Limit':m.get('selection',{}).get('wape_limit_percent'),'WAPE_Relaxed':m.get('selection',{}).get('wape_relaxed',False),
@@ -506,7 +510,8 @@ def load_model_excel(path):
             kind=row.get('Kind','power')
             if kind not in ['power','additive']:raise ValueError('지원하지 않는 수식 종류입니다.')
             add_coeff={t:finite(row['Add_'+t],t,True) for t in ['constant']+terms} if kind=='additive' else {}
-            models[name]={'kind':kind,'additive_coeff':add_coeff,'candidate_id':row.get('CandidateId','current'),'candidate_label':row.get('CandidateLabel','기존 식'),'size_by_type':size_by_type,'size_alpha':size_alpha,'volume_reference':volume_reference,
+            patrol_info=json.loads(row['PatrolInfo']) if pd.notna(row.get('PatrolInfo')) else {}
+            models[name]={'patrol_info':patrol_info,'kind':kind,'additive_coeff':add_coeff,'candidate_id':row.get('CandidateId','current'),'candidate_label':row.get('CandidateLabel','기존 식'),'size_by_type':size_by_type,'size_alpha':size_alpha,'volume_reference':volume_reference,
                           'year_estimated':bool(row.get('YearEstimated',True)),'year_unavailable_reason':'' if pd.isna(row.get('YearIssue','')) else row.get('YearIssue',''),
                           'year_scale':scale,'gamma_base':base_gamma,
                           'year_search':search[search['Target']==name].drop(columns='Target').to_dict('records') if not search.empty else [],
