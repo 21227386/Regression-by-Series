@@ -26,6 +26,8 @@ class UITests(unittest.TestCase):
                 self.assertEqual(len(app.search_tree.get_children()),201)
                 self.assertFalse(hasattr(app,'comparison_tree'))
                 self.assertNotIn('초계정',app.ship_type_entry['values'])
+                self.assertNotIn('기뢰전함',app.ship_type_entry['values'])
+                self.assertIn('Commissioning Year Adjustment by Ship Type',root.title())
                 self.assertEqual(list(app.ship_type_entry['values']).count('초계함'),1)
                 self.assertEqual(app.bundle['models']['SWBS100']['class_counts']['초계함'],1)
                 self.assertEqual(app.reg_target.get(),'SWBS100')
@@ -62,6 +64,8 @@ class UITests(unittest.TestCase):
                 self.assertTrue(p.exists())
                 app.open_guide();root.update()
                 self.assertEqual(len(app.final_formula_images),7)
+                captions=[w.cget('text') for w in app.final_body.winfo_children() if isinstance(w,tk.Label)]
+                self.assertFalse(any(' / 기존 식' in t or ' / 추천 식' in t or ' / 추가 식' in t for t in captions))
                 self.assertTrue(app.use_design_values.get())
                 self.assertFalse(hasattr(app,'equation_images'))
                 self.assertFalse(any(app.reg_tabs.tab(t,'text')=='Formula Comparison' for t in app.reg_tabs.tabs()))

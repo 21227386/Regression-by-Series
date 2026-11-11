@@ -14,7 +14,7 @@ from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, templat
 TARGET_NAMES={'SWBS100':'Hull Structure','SWBS200':'Propulsion Plant','SWBS300':'Electric Plant',
               'SWBS400':'Command & Surveillance','SWBS500':'Auxiliary Systems','SWBS600':'Outfit & Furnishings',
               TOTAL_MODEL:'Lightship (Excluding SWBS700)'}
-TITLE = 'Naval Ship Weight Estimator - Ship Type Year'
+TITLE = 'Naval Ship Weight Estimator - Commissioning Year Adjustment by Ship Type'
 NAVY, INK, TEAL, GOLD = '#102638', '#19384a', '#087f87', '#c69c55'
 BG, WHITE, MUTED = '#edf2f5', '#ffffff', '#607887'
 EN, KO = 'Times New Roman', '맑은 고딕'
@@ -68,7 +68,7 @@ class App:
         words = tk.Frame(h, bg=NAVY); words.pack(side='left', padx=28, pady=10)
         self.label(words, 'NAVAL SHIP DESIGN  /  ENGINEERING ANALYTICS', 10, GOLD, NAVY, True, True).pack(anchor='w')
         self.label(words, 'Naval Ship Weight Estimator', 28, WHITE, NAVY, True, True).pack(anchor='w', pady=(8, 0))
-        self.label(words, '(Total & Series) / Ship Type Year', 18, '#a9d6da', NAVY, False, True).pack(anchor='w')
+        self.label(words, '(Total & Series) / Commissioning Year Adjustment by Ship Type', 18, '#a9d6da', NAVY, False, True).pack(anchor='w')
         self.label(words, '함정 중량 추정 및 SWBS 계열별 중량 분석', 10, '#b8cdd8', NAVY).pack(anchor='w', pady=(5, 0))
         c = tk.Canvas(h, width=440, height=142, bg=NAVY, highlightthickness=0); c.pack(side='right', padx=25)
         self.ship_canvas = c; self.draw_ship(c)
@@ -130,7 +130,7 @@ class App:
             self.label(cell, caption, 10, MUTED, english=True).pack(anchor='w')
             var=tk.StringVar(); self.inputs[key]=var
             if key=='함분류':
-                e=ttk.Combobox(cell,textvariable=var,values=SHIP_TYPES,state='readonly',width=15,font=(KO,11)); var.set('호위함');self.ship_type_entry=e
+                e=ttk.Combobox(cell,textvariable=var,values=[t for t in SHIP_TYPES if t!='기뢰전함'],state='readonly',width=15,font=(KO,11)); var.set('호위함');self.ship_type_entry=e
             else:
                 e=tk.Entry(cell,textvariable=var,font=(EN,14),bg='#f3f7fa',fg=INK,relief='sunken',bd=2,width=15)
             e.pack(fill='x',ipady=4,pady=(4,0))
@@ -294,7 +294,7 @@ class App:
             if self.use_design_values.get() and design is None:
                 self.label(self.final_body,'Weight Estimation에서 같은 함종의 설계 제원을 입력해 예측하면 제원 숫자도 대입됩니다.',9,MUTED).pack(anchor='w')
             for name,m in self.bundle['models'].items():
-                self.label(self.final_body,name+' / '+cls+' / '+m.get('candidate_label','기존 식'),11,TEAL,WHITE,True).pack(anchor='w',pady=(10,0))
+                self.label(self.final_body,name+' / '+cls,11,TEAL,WHITE,True).pack(anchor='w',pady=(10,0))
                 formula=final_equation(name,m,cls,design)
                 photo=tk.PhotoImage(data=base64.b64encode(render_png(formula,width))).subsample(2)
                 self.final_formula_images.append(photo)
@@ -362,7 +362,7 @@ class App:
         self.reg_stats.set(f"Train N {metric['n']}   R² {fmt(metric['r2'],4)}   RMSE {fmt(metric['rmse_tonne'],2)} t   MAPE {fmt(metric['mape_percent'],2)}%   WAPE {fmt(metric['wape_percent'],2)}%")
         self.ship_tree.delete(*self.ship_tree.get_children());self.ship_row_ids={}
         for d in sorted(rows,key=lambda r:abs(r['오차율(%)']),reverse=True):
-            item=self.ship_tree.insert('','end',values=(d.get('순번',str(int(d['엑셀 행'])-1)),d['엑셀 행'],d['함종'],d.get('함유형',''),f"{d['Dt']:.5g}",f"{d.get('연도보정값',1):.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"),tags=('large_error',) if abs(d['오차율(%)'])>=20 else ())
+            item=self.ship_tree.insert('','end',values=(d.get('순번',str(int(d['엑셀 행'])-1)),d['엑셀 행'],d['함종'],d.get('함유형',''),f"{d['Dt']:.5g}",f"{d.get('연도보정값',1):.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"),tags=('large_error',) if abs(d['오차율(%)'])>10 else ())
             self.ship_row_ids[str(d.get('순번',str(int(d['엑셀 행'])-1)))]=item
         self.metric_tree.delete(*self.metric_tree.get_children());self.coeff_tree.delete(*self.coeff_tree.get_children())
         for name,x in self.bundle['models'].items():
@@ -375,7 +375,7 @@ class App:
                         f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",'—' if x.get('kind')=='additive' else f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
                 values += [f"{x['size_alpha'][ship_type]:.8g}" if t=='LBD' and x.get('size_by_type') else f"{terms[t]:.8g}" if t in terms and x.get('kind')!='additive' else '—' for t in ['LBD','LB','L','P','PE','D','B']]
                 self.coeff_tree.insert('','end',values=values+[f"{x['additive_coeff']['constant']:.8g}" if x.get('kind')=='additive' else '—',', '.join(t+'='+f'{v:.8g}' for t,v in x.get('additive_coeff',{}).items() if t!='constant') or '—']+[f"{x['year_scale']*100:.0f}" if x.get('year_scale') is not None else '—',f"{x.get('gamma_base',{}).get(ship_type,x['gamma'].get(ship_type,0)):.8g}" if x['year_by_type'] else '—',f"{x['gamma'][ship_type]:.8g}" if x['year_by_type'] else '—', f"{x['mean_years'][ship_type]:.4f}",f"{x['volume_reference']:,.3f}" if x.get('size_by_type') else '—'])
-        self.graph_hover.set('함정별 표는 절대 오차율이 큰 순서입니다. |오차율| 20% 이상은 붉은색으로 표시합니다.')
+        self.graph_hover.set('함정별 표는 절대 오차율이 큰 순서입니다. |오차율| 10% 초과은 붉은색으로 표시합니다.')
         self.update_year_search()
         self.draw_regression_graphs()
 
@@ -453,7 +453,7 @@ class App:
                 x=left+(actual[i] if side==0 else predicted[i])/max_weight*(right-left)
                 fraction=predicted[i]/max_weight if side==0 else (errors[i]+max_error)/(2*max_error)
                 y=bottom-fraction*(bottom-top)
-                color='#ae4437' if abs(d['오차율(%)'])>=20 else TEAL
+                color='#ae4437' if abs(d['오차율(%)'])>10 else TEAL
                 point=c.create_oval(x-3,y-3,x+3,y+3,fill=color,outline=WHITE)
                 number=str(d.get('순번',str(int(d['엑셀 행'])-1)))
                 items=[point]
@@ -552,7 +552,7 @@ class App:
                    'R²·RMSE·MAPE 및 그래프는 학습자료 기준이며 독립 검증 성능이 아닙니다.',
                    '엑셀 모델에는 전체 정밀도의 계수·학습 범위·진단 결과가 저장됩니다.']+self.bundle.get('warnings',[])))
     def save(self):
-        self.require();p=self.choose(True,initialfile='Ship Type Year Excluding 700 Model.xlsx')
+        self.require();p=self.choose(True,initialfile='Commissioning Year Adjustment by Ship Type Excluding 700 Model.xlsx')
         if p:save_model_excel(p,self.bundle);self.status.set('MODEL SAVED  |  '+p)
     def load(self):
         p=self.choose()
