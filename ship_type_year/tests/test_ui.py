@@ -13,6 +13,7 @@ from test_model import fleet
 class UITests(unittest.TestCase):
     def test_ship_type_year_gui(self):
         root=tk.Tk();app=App(root);root.geometry('1380x900+0+0');root.update()
+        self.assertLessEqual(app.header_description.winfo_rooty()+app.header_description.winfo_height(),app.header_frame.winfo_rooty()+app.header_frame.winfo_height()-4)
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 from test_patrol import with_patrol
@@ -20,7 +21,16 @@ class UITests(unittest.TestCase):
                 with patch.object(app,'choose',return_value=str(p)):app.fit()
                 self.assertTrue(app.analysis_dialog.winfo_exists())
                 deadline=time.monotonic()+120
-                while app.busy and time.monotonic()<deadline:root.update();time.sleep(.02)
+                ticks=[];tick_times=[];last_tick=-1
+                while app.busy and time.monotonic()<deadline:
+                    root.update()
+                    if app.busy:
+                        ticks.append(app.analysis_tick)
+                        if app.analysis_tick!=last_tick:
+                            tick_times.append(time.monotonic());last_tick=app.analysis_tick
+                    time.sleep(.02)
+                self.assertGreater(max(ticks,default=0),5)
+                self.assertLess(max((b-a for a,b in zip(tick_times,tick_times[1:])),default=0),1.0)
                 self.assertFalse(app.busy);self.assertIsNotNone(app.bundle)
                 self.assertFalse(app.analysis_dialog.winfo_exists())
                 self.assertEqual(len(app.search_tree.get_children()),201)

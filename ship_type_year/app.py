@@ -1,5 +1,6 @@
 """Naval Ship Weight Estimator — native Windows desktop interface."""
-import threading
+import multiprocessing as mp
+import time
 import queue
 import math
 import base64
@@ -8,6 +9,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import pandas as pd
 from year_search import SCALES,MAX_PERCENT
+from training_job import start_regression
 from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
                    coefficients, validate_model_types, normalize_types, save_model_excel, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics, formula_text)
 
@@ -64,12 +66,15 @@ class App:
         return button
 
     def header(self):
-        h = tk.Frame(self.root, bg=NAVY, height=146); h.pack(fill='x'); h.pack_propagate(False)
+        h = tk.Frame(self.root, bg=NAVY, height=166); h.pack(fill='x'); h.pack_propagate(False)
         words = tk.Frame(h, bg=NAVY); words.pack(side='left', padx=28, pady=10)
         self.label(words, 'NAVAL SHIP DESIGN  /  ENGINEERING ANALYTICS', 10, GOLD, NAVY, True, True).pack(anchor='w')
         self.label(words, 'Naval Ship Weight Estimator', 28, WHITE, NAVY, True, True).pack(anchor='w', pady=(8, 0))
-        self.label(words, '(Total & Series) / Commissioning Year Adjustment by Ship Type', 18, '#a9d6da', NAVY, False, True).pack(anchor='w')
-        self.label(words, '함정 중량 추정 및 SWBS 계열별 중량 분석', 10, '#b8cdd8', NAVY).pack(anchor='w', pady=(5, 0))
+        self.label(words, 'Total & Series / Commissioning Year Adjustment by Ship Type', 18, '#a9d6da', NAVY, False, True).pack(anchor='w')
+        self.header_description=self.label(words, '함정 중량 추정 및 SWBS 계열별 중량 분석', 11, '#dfedf5', NAVY, True)
+        self.header_description.pack(anchor='w', pady=(5, 0))
+        self.header_frame=h
+        self.root.after_idle(lambda:h.configure(height=max(156,words.winfo_reqheight()+20)))
         c = tk.Canvas(h, width=440, height=142, bg=NAVY, highlightthickness=0); c.pack(side='right', padx=25)
         self.ship_canvas = c; self.draw_ship(c)
 
@@ -322,14 +327,17 @@ class App:
         tk.Label(self.analysis_dialog,textvariable=self.analysis_message,font=(KO,10),fg=INK,bg=WHITE).pack(pady=4)
         self.analysis_progress=ttk.Progressbar(self.analysis_dialog,maximum=21*len(SCALES),length=410);self.analysis_progress.pack(pady=8)
         self.analysis_tick=0
+        self.analysis_started=time.monotonic()
+        canvas.create_line(45,33,365,33,fill='#d5e3ea',width=2)
+        lens=canvas.create_oval(192,8,218,34,outline=TEAL,width=3)
+        handle=canvas.create_line(215,30,227,42,fill=TEAL,width=5)
         def animate():
             if not self.busy or not self.analysis_dialog.winfo_exists():return
-            canvas.delete('all');self.analysis_tick+=1
-            cx=205+130*math.sin(self.analysis_tick/7)
-            canvas.create_line(45,33,365,33,fill='#d5e3ea',width=2)
-            canvas.create_oval(cx-13,8,cx+13,34,outline=TEAL,width=3)
-            canvas.create_line(cx+10,30,cx+22,42,fill=TEAL,width=5)
-            self.root.after(75,animate)
+            self.analysis_tick+=1
+            cx=205+130*math.sin((time.monotonic()-self.analysis_started)*2.5)
+            canvas.coords(lens,cx-13,8,cx+13,34)
+            canvas.coords(handle,cx+10,30,cx+22,42)
+            self.root.after(40,animate)
         animate()
 
     def close_analysis(self):
@@ -501,17 +509,35 @@ class App:
         p=self.choose()
         if not p:return
         self.busy=True; self.status.set('TRAINING  |  0%~200% (1% 간격) 후보 재학습·실적함 적합도 비교 중…')
-        state={};updates=queue.Queue();self.show_analysis()
-        def report(done,total,message):updates.put((done,total,message))
-        def worker():
-            try:
-                data=read_excel(p); state['result']=(data,train(data,progress=report,wape_limit_percent=initial_limit,auto_relax_wape=True))
-            except Exception as e:state['error']=str(e)
-        thread=threading.Thread(target=worker,daemon=True);thread.start()
+        state={};self.show_analysis()
+        try:
+            process,updates=start_regression(p,initial_limit)
+            self.training_process=process
+        except Exception:
+            self.busy=False;self.close_analysis();raise
+        exit_seen=[None]
         def finish():
-            while not updates.empty():
-                done,total,message=updates.get_nowait();self.analysis_progress.configure(maximum=total,value=done);self.analysis_message.set(message)
-            if thread.is_alive(): self.root.after(100,finish);return
+            latest=None
+            # Bound the work per UI tick: progress cannot monopolize the event loop.
+            for _ in range(16):
+                try:msg=updates.get_nowait()
+                except queue.Empty:break
+                except (EOFError,OSError) as e:
+                    state['error']=f'해석 프로세스 통신 오류: {e}';break
+                if msg[0]=='progress':latest=msg
+                elif msg[0]=='result':state['result']=(msg[1],msg[2]);break
+                elif msg[0]=='error':state['error']=msg[1];break
+            if latest:
+                _,done,total,message=latest
+                self.analysis_progress.configure(maximum=total,value=done);self.analysis_message.set(message)
+            if not state:
+                if process.is_alive():self.root.after(50,finish);return
+                if exit_seen[0] is None:exit_seen[0]=time.monotonic()
+                if time.monotonic()-exit_seen[0]<1:
+                    self.root.after(50,finish);return
+                state['error']=f'해석 프로세스가 결과 없이 종료되었습니다. (종료 코드: {process.exitcode})'
+            process.join(timeout=0)
+            updates.close()
             self.busy=False;self.close_analysis()
             if 'error' in state:
                 self.status.set('UPLOAD FAILED  |  기존 모델은 유지됩니다.');messagebox.showerror('학습 실패',state['error']);return
@@ -608,11 +634,15 @@ class App:
 
 if __name__=='__main__':
     import sys
+    mp.freeze_support()
     if len(sys.argv)==3 and sys.argv[1]=='--verify-equation-renderer':
         from final_equations import render_png
         Path(sys.argv[2]).write_bytes(render_png(r'\widehat W_{100}=1318.8\left(\frac{LBD}{15000}\right)^{0.8}\times1.2\exp\left[0.03\frac{Y-2005}{10}\right]\times1.01'))
     elif len(sys.argv)==3 and sys.argv[1]=='--verify-regression-engine':
         from additive import verify_engine
         verify_engine(sys.argv[2])
+    elif len(sys.argv)==3 and sys.argv[1]=='--verify-training-worker':
+        from training_job import verify_worker
+        verify_worker(sys.argv[2])
     else:
         root=tk.Tk();App(root);root.mainloop()

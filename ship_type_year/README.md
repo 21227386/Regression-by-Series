@@ -52,3 +52,6 @@ WAPE = 100 × Σ|실제−예측| / Σ실제입니다. 전체 유효 실적함�
 
 
 화면 부제와 창 제목은 Commissioning Year Adjustment by Ship Type입니다. 그래프 점·순번 및 함정별 진단표는 절대 오차율이 10%를 초과할 때 붉게 표시하며 정확히 ±10%는 일반 색상입니다. Equations & Guide의 수식 제목은 계열 / 함종만 표시합니다. Weight Estimation의 신규 설계 함종 메뉴에서만 기뢰전함을 제외하고, 실적함 입력·학습·회귀 결과 조회는 그대로 지원합니다.
+
+
+상단 부제는 Total & Series / Commissioning Year Adjustment by Ship Type입니다. 한글 설명은 11pt 굵게 표시하고 헤더 높이를 실제 글자 높이에 맞춥니다. 회귀분석은 spawn 방식의 별도 프로세스에서 수행하여 Tk 화면과 Python 실행 잠금을 공유하지 않습니다. 진행 메시지는 50ms 단위로 합치고 UI에서 한 번에 최대 16개만 읽습니다. 돋보기는 40ms 간격으로 기존 도형 위치를 변경하며 계산 시작부터 완료·오류까지 반복합니다. Windows EXE의 freeze_support 및 별도 프로세스 전체 회귀 스모크 검사를 CI에서 수행합니다.
