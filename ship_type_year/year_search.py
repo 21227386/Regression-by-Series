@@ -5,7 +5,7 @@ SCALES=tuple(i/100 for i in range(MAX_PERCENT+1))
 
 def metrics(actual,predicted):
     if not np.isfinite(predicted).all() or (predicted<=0).any():raise ValueError('유효하지 않은 예측값')
-    return {'mape':float(np.mean(abs((predicted-actual)/actual))*100),'rmse':float(np.sqrt(np.mean((predicted-actual)**2)))}
+    return {'mape':float(np.mean(abs((predicted-actual)/actual))*100),'wape':float(np.sum(abs(predicted-actual))/np.sum(actual)*100),'rmse':float(np.sqrt(np.mean((predicted-actual)**2)))}
 
 def refit_scale(df,base,q,diagnostics=True):
     if base.get('kind')=='additive':
@@ -28,7 +28,7 @@ def refit_scale(df,base,q,diagnostics=True):
             m['coef']=[float(coef[0]),0.0]+coef[1:ntypes].tolist()
         pred=predict_one(df,m)
     actual=df[base['target']].to_numpy();scores=metrics(actual,pred);den=float(((actual-actual.mean())**2).sum())
-    m.update(mape_percent=scores['mape'],rmse_tonne=scores['rmse'],r2=None if den==0 else float(1-((actual-pred)**2).sum()/den))
+    m.update(wape_percent=scores['wape'],mape_percent=scores['mape'],rmse_tonne=scores['rmse'],r2=None if den==0 else float(1-((actual-pred)**2).sum()/den))
     if diagnostics:
         records=[]
         for j,(_,row) in enumerate(df.iterrows()):
@@ -49,12 +49,12 @@ def select_year_scale(df,baseline,progress=None):
     rows=[]
     for i,q in enumerate(SCALES):
         if progress:progress(i+1,len(SCALES),int(round(q*100)))
-        row={'percent':int(round(q*100)),'train_mape':None,'train_rmse':None,'train_n':len(df),'selected':False,'error':''}
+        row={'percent':int(round(q*100)),'train_mape':None,'train_wape':None,'train_rmse':None,'train_n':len(df),'selected':False,'error':''}
         if q>0 and not baseline.get('year_estimated',True):
             row['error']=baseline.get('year_unavailable_reason','연도 효과 식별 불가');rows.append(row);continue
         try:
             candidate=refit_scale(df,baseline,q,False)
-            row.update(train_mape=candidate['mape_percent'],train_rmse=candidate['rmse_tonne'])
+            row.update(train_wape=candidate['wape_percent'],train_mape=candidate['mape_percent'],train_rmse=candidate['rmse_tonne'])
         except (ValueError,FloatingPointError,OverflowError,np.linalg.LinAlgError) as e:row['error']=str(e)
         rows.append(row)
     valid=[r for r in rows if r['train_mape'] is not None and not r['error']]
@@ -65,4 +65,36 @@ def select_year_scale(df,baseline,progress=None):
     for r in rows:r['selected']=r['percent']==best['percent']
     result.update(year_search=rows,selection={'status':'실적함 Train MAPE 최소 선택' if baseline.get('year_estimated',True) else '연도 효과 식별 불가 · 0% 적용','basis':'train','train_n':len(df),'total_n':len(df),'reason':baseline.get('year_unavailable_reason',''),
                                             'train_mape':best['train_mape'],'train_rmse':best['train_rmse']})
+    return result
+
+
+class NoFeasibleWAPE(ValueError):
+    pass
+
+
+def relaxed_wape_limit(rows,requested,auto_relax=True):
+    """Smallest requested+n percentage-point limit admitting any valid candidate."""
+    import math
+    valid=[r['train_wape'] for r in rows if r.get('train_wape') is not None and not r.get('error')]
+    if not valid:raise NoFeasibleWAPE('계산 가능한 WAPE 후보가 없습니다.')
+    if not np.isfinite(requested) or requested<0:raise ValueError('WAPE 초기 기준은 0 이상의 유한한 수여야 합니다.')
+    minimum=min(valid)
+    if minimum<=requested+1e-9:return float(requested)
+    if not auto_relax:raise NoFeasibleWAPE(f'WAPE ≤ {requested:g}% 후보 없음. 계산된 최소 WAPE {minimum:.4f}%.')
+    return float(requested+math.ceil(minimum-requested-1e-9))
+
+
+def constrained_candidate(df,baseline,model,requested,used):
+    rows=[dict(r) for r in model['year_search']]
+    valid=[r for r in rows if r.get('train_wape') is not None and not r.get('error') and r['train_wape']<=used+1e-9]
+    if not valid:return None
+    best=min(valid,key=lambda r:(round(r['train_mape'],8),round(r['train_rmse'],8),r['percent']))
+    result=refit_scale(df,baseline,best['percent']/100,True)
+    for r in rows:
+        r['wape_eligible']=r.get('train_wape') is not None and not r.get('error') and r['train_wape']<=used+1e-9
+        r['selected']=r['percent']==best['percent']
+    result.update({k:model[k] for k in ['candidate_id','candidate_label','formula']})
+    result.update(year_search=rows,selection={**model['selection'],'status':'WAPE 기준 충족 후보 중 Train MAPE 최소',
+        'train_mape':best['train_mape'],'train_rmse':best['train_rmse'],'train_wape':best['train_wape'],
+        'wape_requested_percent':requested,'wape_limit_percent':used,'wape_relaxed':used>requested+1e-9})
     return result

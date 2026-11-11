@@ -97,6 +97,11 @@ class App:
         self.label(inner, '실적함 데이터 · 자동 회귀 학습', 10, '#d2e1e8', NAVY).pack(anchor='w', pady=(6,8))
         self.button(inner, 'Download Input File Template', self.make_template).pack(fill='x', pady=3)
         self.button(inner, 'Input File Upload', self.fit, True).pack(fill='x', pady=3)
+        settings=tk.Frame(inner,bg=NAVY);settings.pack(fill='x',pady=(5,0))
+        tk.Label(settings,text='초기 WAPE 기준 (%)',font=(KO,10),bg=NAVY,fg='#d2e1e8').pack(side='left')
+        self.wape_initial=tk.StringVar(value='10')
+        ttk.Entry(settings,textvariable=self.wape_initial,width=6).pack(side='right')
+        tk.Label(inner,text='후보 없으면 해당 계열만 1%p 자동 완화',font=(KO,9),bg=NAVY,fg='#b8cdd8').pack(anchor='w',pady=(2,3))
         self.fleet_info = tk.StringVar(value='아직 학습된 모델이 없습니다.')
         tk.Label(inner, textvariable=self.fleet_info, wraplength=245, justify='left', bg=NAVY, fg='#b8cdd8', font=(KO,10)).pack(anchor='w', pady=5)
         self.label(inner, '2  /  Regression', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
@@ -214,7 +219,7 @@ class App:
         self.search_graph=tk.Canvas(self.search_tab,bg='#f3f7fa',height=115,highlightthickness=0)
         self.search_graph.pack(side='bottom',fill='x',padx=10,pady=5)
         self.search_graph.bind('<Configure>',lambda e:self.draw_search_graph())
-        self.search_tree=self.scroll_table(self.search_tab,['Year %','Train MAPE (%)','Train RMSE (t)','Ships','Selected','Error'],[90,160,160,90,100,350])
+        self.search_tree=self.scroll_table(self.search_tab,['Year %','Train MAPE (%)','Train WAPE (%)','WAPE OK','Train RMSE (t)','Ships','Selected','Error'],[80,135,135,95,140,70,85,350])
         self.search_tree.tag_configure('chosen',background='#d8eeeb')
         self.reg_graph=tk.Canvas(overview,bg='#f3f7fa',height=320,highlightthickness=0)
         # Pack the graph after its information footer so hover details remain visible.
@@ -231,7 +236,7 @@ class App:
         self.ship_diagnostics_tab=ships
         self.ship_tree=self.scroll_table(ships,['Ship No.','Excel Row','Ship Type','Subtype','Dt','F(Y)','Actual (t)','Predicted (t)','Residual (t)','Error (%)'],[85,80,90,100,85,95,120,120,120,100])
         self.ship_tree.tag_configure('large_error',foreground='#ae4437')
-        self.metric_tree=self.scroll_table(stats,['Target','Ships','Train RMSE (t)','Train MAPE (%)','Train R²','Parameters','Condition','Year %'],[180,65,135,100,100,90,120,90])
+        self.metric_tree=self.scroll_table(stats,['Target','Ships','Train RMSE (t)','Train MAPE (%)','Train WAPE (%)','WAPE Limit (%)','Train R²','Parameters','Condition','Year %'],[180,65,135,110,110,120,100,90,120,90])
         self.log=tk.Text(notes,wrap='word',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
         sy=ttk.Scrollbar(notes,orient='vertical',command=self.log.yview);self.log.configure(yscrollcommand=sy.set)
         sy.pack(side='right',fill='y');self.log.pack(fill='both',expand=True)
@@ -296,6 +301,7 @@ class App:
                 tk.Label(self.final_body,image=photo,bg=WHITE,anchor='w').pack(anchor='w')
                 percent=m.get('year_scale')
                 info=variable_description(m,cls)+'\n선택 연도 효과 '+('—' if percent is None else f'{percent*100:.0f}%')+' / '+m.get('selection',{}).get('status','')
+                info+='\n'+self.wape_rule(m)
                 if m.get('year_unavailable_reason'):info+=' / '+m['year_unavailable_reason']
                 tk.Label(self.final_body,text=info,bg=WHITE,fg=MUTED,font=(KO,9),wraplength=width,justify='left').pack(anchor='w')
             self.label(self.final_body,'합산 중량(700계열 제외) = 위 SWBS100~600의 예측 중량 합계',11,INK,WHITE,True).pack(anchor='w',pady=8)
@@ -330,6 +336,12 @@ class App:
         if hasattr(self,'analysis_dialog') and self.analysis_dialog.winfo_exists():
             self.analysis_dialog.grab_release();self.analysis_dialog.destroy()
 
+    def wape_rule(self,m):
+        info=m.get('selection',{});initial=info.get('wape_requested_percent');used=info.get('wape_limit_percent')
+        if used is None:return 'WAPE 기준: 미적용(이전 모델)'
+        actual=m.get('wape_percent',0)
+        return f"WAPE {actual:.3f}% ≤ 적용 기준 {used:g}% / 초기 {initial:g}% / "+('1%p 단위 자동 완화' if info.get('wape_relaxed') else '완화 없음')
+
     def selected_type(self):
         choice=self.ship_filter.get()
         return None if choice=='All Ship Types' else choice
@@ -347,7 +359,7 @@ class App:
         if not model:return
         rows=diagnostic_rows(model,cls);metric=diagnostic_metrics(rows)
         def fmt(v,places=3):return '—' if v is None else f'{v:,.{places}f}'
-        self.reg_stats.set(f"Train N {metric['n']}   R² {fmt(metric['r2'],4)}   RMSE {fmt(metric['rmse_tonne'],2)} t   MAPE {fmt(metric['mape_percent'],2)}%")
+        self.reg_stats.set(f"Train N {metric['n']}   R² {fmt(metric['r2'],4)}   RMSE {fmt(metric['rmse_tonne'],2)} t   MAPE {fmt(metric['mape_percent'],2)}%   WAPE {fmt(metric['wape_percent'],2)}%")
         self.ship_tree.delete(*self.ship_tree.get_children());self.ship_row_ids={}
         for d in sorted(rows,key=lambda r:abs(r['오차율(%)']),reverse=True):
             item=self.ship_tree.insert('','end',values=(d.get('순번',str(int(d['엑셀 행'])-1)),d['엑셀 행'],d['함종'],d.get('함유형',''),f"{d['Dt']:.5g}",f"{d.get('연도보정값',1):.5g}",f"{d['실제중량']:,.3f}",f"{d['예측중량']:,.3f}",f"{d['잔차']:,.3f}",f"{d['오차율(%)']:.2f}"),tags=('large_error',) if abs(d['오차율(%)'])>=20 else ())
@@ -355,7 +367,7 @@ class App:
         self.metric_tree.delete(*self.metric_tree.get_children());self.coeff_tree.delete(*self.coeff_tree.get_children())
         for name,x in self.bundle['models'].items():
             m=diagnostic_metrics(diagnostic_rows(x,cls))
-            self.metric_tree.insert('','end',values=(name,m['n'],fmt(m['rmse_tonne']),fmt(m['mape_percent']),fmt(m['r2'],4),x['parameters'],f"{x['condition_number']:.2f}",'—' if x.get('year_scale') is None else f"{x['year_scale']*100:.0f}"))
+            self.metric_tree.insert('','end',values=(name,m['n'],fmt(m['rmse_tonne']),fmt(m['mape_percent']),fmt(m['wape_percent']),fmt(x.get('selection',{}).get('wape_limit_percent')),fmt(m['r2'],4),x['parameters'],f"{x['condition_number']:.2f}",'—' if x.get('year_scale') is None else f"{x['year_scale']*100:.0f}"))
             terms=dict(zip(x['terms'],x['coef'][1:1+len(x['terms'])]));offset=1+len(x['terms'])
             for j,ship_type in enumerate(x['classes']):
                 if cls is not None and ship_type!=cls:continue
@@ -374,11 +386,12 @@ class App:
         if not m.get('year_by_type'):
             self.search_note.set('선택 계열은 연도 항이 없어 비율 탐색 대상이 아닙니다. 100계열은 함종별 규모 지수 αt를 사용합니다.');self.draw_search_graph();return
         info=m.get('selection',{});q=m.get('year_scale',1)
-        self.search_note.set(f"{m.get('candidate_label','기존 식')} / 선택 {q*100:.0f}% / 실적함 Train MAPE 최소 / 유효 실적함 {m['n']}척 전체 사용.\n탐색 범위 0~200% · 1% 간격. 각 후보에서 나머지 계수와 C를 재추정합니다. 함종 필터와 관계없이 계열 전체에서 선택합니다.")
+        self.search_note.set(f"{m.get('candidate_label','기존 식')} / 선택 {q*100:.0f}% / WAPE 기준 충족 후 Train MAPE 최소 / 유효 실적함 {m['n']}척 전체 사용.\n탐색 범위 0~200% · 1% 간격. 각 후보에서 나머지 계수와 C를 재추정합니다. 함종 필터와 관계없이 계열 전체에서 선택합니다.")
+        self.search_note.set(self.search_note.get()+'\n'+self.wape_rule(m))
         def fmt(v):return '—' if v is None else f'{float(v):,.3f}'
         chosen_item=None
         for r in m.get('year_search',[]):
-            item=self.search_tree.insert('','end',values=(r['percent'],fmt(r.get('train_mape')),fmt(r.get('train_rmse')),r.get('train_n',m['n']),'YES' if r.get('selected') else '',r.get('error') or ''),tags=('chosen',) if r.get('selected') else ())
+            item=self.search_tree.insert('','end',values=(r['percent'],fmt(r.get('train_mape')),fmt(r.get('train_wape')),'YES' if r.get('wape_eligible') else 'NO' if r.get('train_wape') is not None else '—',fmt(r.get('train_rmse')),r.get('train_n',m['n']),'YES' if r.get('selected') else '',r.get('error') or ''),tags=('chosen',) if r.get('selected') else ())
             if r.get('selected'):chosen_item=item
         if chosen_item:self.search_tree.see(chosen_item)
         self.draw_search_graph()
@@ -391,17 +404,18 @@ class App:
         w=max(c.winfo_width(),600);left,right,top,bottom=62,w-25,25,82
         finite=[r[k] for r in rows for k in ['train_mape'] if r.get(k) is not None]
         ceiling=max(finite+[1])*1.1
-        c.create_text(left,10,anchor='w',text='Train MAPE (%) / Fit to reference fleet',font=(EN,10),fill=INK)
+        c.create_text(left,10,anchor='w',text='Train MAPE (%) / teal: WAPE eligible · gray: excluded',font=(EN,10),fill=INK)
         c.create_line(left,top,left,bottom,right,bottom,fill=MUTED)
         c.create_text(left-7,top,anchor='e',text=f'{ceiling:.2g}',font=(EN,9),fill=MUTED)
         c.create_text(left-7,bottom,anchor='e',text='0',font=(EN,9),fill=MUTED)
+        limit=self.bundle['models'].get(self.reg_target.get(),{}).get('selection',{}).get('wape_limit_percent')
         for key,color in [('train_mape',TEAL)]:
             points=[]
             for r in sorted(rows,key=lambda v:v['percent']):
                 x=left+r['percent']/MAX_PERCENT*(right-left)
                 if r['percent']%20==0:c.create_text(x,bottom+14,text=str(r['percent'])+'%',font=(EN,9),fill=MUTED)
                 if r.get(key) is None:continue
-                y=bottom-r[key]/ceiling*(bottom-top);points.extend([x,y]);c.create_oval(x-3,y-3,x+3,y+3,fill=color,outline='')
+                y=bottom-r[key]/ceiling*(bottom-top);points.extend([x,y]);c.create_oval(x-3,y-3,x+3,y+3,fill=color if limit is None or r.get('wape_eligible') else '#9aabb5',outline='')
             if len(points)>=4:c.create_line(*points,fill=color,width=2)
 
     def select_graph_ship(self, number, message):
@@ -481,6 +495,9 @@ class App:
         p=self.choose(True,initialfile='Input File Template.xlsx')
         if p: template(p); self.status.set('TEMPLATE SAVED  |  '+str(p)); messagebox.showinfo('양식 저장 완료','첫 번째 시트에 실적함 자료를 입력한 후 Input File Upload를 누르세요.')
     def fit(self):
+        try:initial_limit=float(self.wape_initial.get())
+        except ValueError:raise ValueError('WAPE 기준을 숫자로 입력하세요.')
+        if not math.isfinite(initial_limit) or initial_limit<0:raise ValueError('WAPE 기준은 0 이상의 유한한 수여야 합니다.')
         p=self.choose()
         if not p:return
         self.busy=True; self.status.set('TRAINING  |  0%~200% (1% 간격) 후보 재학습·실적함 적합도 비교 중…')
@@ -488,7 +505,7 @@ class App:
         def report(done,total,message):updates.put((done,total,message))
         def worker():
             try:
-                data=read_excel(p); state['result']=(data,train(data,progress=report))
+                data=read_excel(p); state['result']=(data,train(data,progress=report,wape_limit_percent=initial_limit,auto_relax_wape=True))
             except Exception as e:state['error']=str(e)
         thread=threading.Thread(target=worker,daemon=True);thread.start()
         def finish():
@@ -502,7 +519,8 @@ class App:
             self.refresh_model(Path(p).name)
             skipped = self.data.attrs.get('excluded_rows', [])
             if skipped: messagebox.showinfo('입력 오류 함정 데이터 제외', f'{len(skipped)}척 제외, {len(self.data)}척으로 학습했습니다. 회귀 탭과 결과 엑셀의 제외 행 시트에서 확인하세요.')
-            self.status.set('MODEL READY  |  계수 추정 완료. 신규 설계 제원을 입력하세요.')
+            relaxed=sum(bool(m.get('selection',{}).get('wape_relaxed')) for m in self.bundle['models'].values())
+            self.status.set(f'MODEL READY  |  WAPE 기준 자동 완화 {relaxed}개 모형. 적용 기준은 Year Effect Search / Fit Statistics에서 확인하세요.' if relaxed else 'MODEL READY  |  WAPE 초기 기준 충족. 신규 설계 제원을 입력하세요.')
             self.reg_target.set('SWBS100');self.update_diagnostics()
             self.notebook.select(self.model_tab);self.reg_tabs.select(0)
         self.root.after(100,finish)

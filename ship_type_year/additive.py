@@ -79,7 +79,7 @@ def refit(df,base,q,diagnostics=True):
     pred=predict_one(df,m);actual=df[base['target']].to_numpy()
     if not np.isfinite(pred).all() or (pred<=0).any():raise ValueError('덧셈식 예측값이 유효하지 않습니다.')
     den=float(((actual-actual.mean())**2).sum())
-    m.update(mape_percent=float(np.mean(abs((pred-actual)/actual))*100),rmse_tonne=float(np.sqrt(np.mean((pred-actual)**2))),r2=None if den==0 else float(1-((actual-pred)**2).sum()/den))
+    m.update(wape_percent=float(np.sum(abs(pred-actual))/np.sum(actual)*100),mape_percent=float(np.mean(abs((pred-actual)/actual))*100),rmse_tonne=float(np.sqrt(np.mean((pred-actual)**2))),r2=None if den==0 else float(1-((actual-pred)**2).sum()/den))
     if diagnostics:
         records=[];dts={c:1.0 if j==0 else float(np.exp(m['coef'][1+len(m['terms'])+j-1])) for j,c in enumerate(m['classes'])}
         for j,(_,row) in enumerate(df.iterrows()):

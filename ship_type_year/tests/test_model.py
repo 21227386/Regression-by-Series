@@ -6,7 +6,7 @@ import pandas as pd
 from model import TERMS, YEAR_TARGETS, WEIGHTS, design, train, predict, read_excel, save_model_excel, load_model_excel, coefficients, template, TOTAL_MODEL, TOTAL_TARGET, TOTAL_SUM_COLUMN
 
 from functools import partial
-train=partial(train,compare=False)
+train=partial(train,compare=False,wape_limit_percent=None)
 
 def fleet():
     rng=np.random.default_rng(67);n=100
@@ -78,7 +78,7 @@ class ModelTests(unittest.TestCase):
         from openpyxl import load_workbook
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'template.xlsx';template(p)
-            wb=load_workbook(p);headers=[c.value for c in wb['데이터'][1]]
+            wb=load_workbook(p);self.assertEqual(wb.sheetnames,['데이터']);headers=[c.value for c in wb['데이터'][1]]
             self.assertIn('SWBS700(tonne)',headers);self.assertEqual(headers[-1],'총중량(tonne)')
             comment=wb['데이터'].cell(1,headers.index('SWBS700(tonne)')+1).comment.text
             self.assertIn('공제용',comment)

@@ -252,8 +252,9 @@ def formula_text(m):
         core=' × '.join(t+'^'+letters[j] for j,t in enumerate(m['terms']))
     return 'W = K'+(' × '+core if core else '')+' × Dt × exp[γt(Y−Ȳt)/10] × C'
 
-def train(df,progress=None,compare=True):
-    from year_search import select_year_scale,SCALES
+def train(df,progress=None,compare=True,wape_limit_percent=10.0,auto_relax_wape=True):
+    from year_search import select_year_scale,SCALES,relaxed_wape_limit,constrained_candidate
+    if wape_limit_percent is not None and (not np.isfinite(wape_limit_percent) or wape_limit_percent<0):raise ValueError('WAPE 초기 기준은 0 이상의 유한한 수여야 합니다.')
     df=normalize_types(df)
     if '총중량' in df:
         if 'SWBS700' not in df:raise ValueError('총 경하중량에서 공제할 실적 SWBS700 중량이 필요합니다.')
@@ -269,7 +270,7 @@ def train(df,progress=None,compare=True):
         if (gap>.01).any():warnings.append(f'입력 총중량−SWBS700과 100~600 합계가 1% 이상 다른 자료 {(gap>.01).sum()}척.')
     models={};comparisons=[];searches=[];count=len(specs)*(3 if compare else 1);index=0
     for name,target,current_terms in specs:
-        candidates=[]
+        candidates=[];baselines={}
         variants=[('current','기존 식',current_terms,True)]
         if compare:
             variants.append(('recommended','추천 식',RECOMMENDED_TERMS[name],False))
@@ -286,7 +287,7 @@ def train(df,progress=None,compare=True):
                 else:base=fit_one(df,target,terms,hull_by_type=hull)
                 m=select_year_scale(df,base,report)
                 m.update(candidate_id=candidate_id,candidate_label=label,formula=formula_text(m))
-                candidates.append(m)
+                candidates.append(m);baselines[candidate_id]=base
                 entry.update({'MAPE(%)':m['mape_percent'],'RMSE(t)':m['rmse_tonne'],'R²':m['r2'],'최대절대오차율(%)':max(abs(d['오차율(%)']) for d in m['diagnostics']),'연도효과(%)':m['year_scale']*100,'사유':m.get('year_unavailable_reason','')})
                 searches.extend({'계열':name,'후보':label,**r} for r in m['year_search'])
             except (ValueError,FloatingPointError,OverflowError,np.linalg.LinAlgError) as e:
@@ -296,12 +297,26 @@ def train(df,progress=None,compare=True):
             reason=' / '.join(e['후보']+': '+e['사유'] for e in comparisons if e['계열']==name)
             if name==TOTAL_MODEL:warnings.append('경하중량 직접회귀 미실행: '+reason);continue
             raise ValueError(name+' 모든 수식 후보 계산 실패: '+reason)
+        if wape_limit_percent is not None:
+            all_rows=[r for m in candidates for r in m['year_search']]
+            try:used=relaxed_wape_limit(all_rows,wape_limit_percent,auto_relax_wape)
+            except ValueError as e:raise ValueError(name+': '+str(e)) from e
+            eligible=[constrained_candidate(df,baselines[m['candidate_id']],m,wape_limit_percent,used) for m in candidates]
+            candidates=[m for m in eligible if m is not None]
+            for entry in comparisons:
+                if entry['계열']!=name:continue
+                accepted=next((m for m in candidates if m['candidate_id']==entry['candidate_id']),None)
+                if accepted:
+                    entry.update({'MAPE(%)':accepted['mape_percent'],'WAPE(%)':accepted['wape_percent'],'RMSE(t)':accepted['rmse_tonne'],'연도효과(%)':accepted['year_scale']*100,'WAPE허용기준(%)':used})
+                elif entry['MAPE(%)'] is not None:
+                    entry.update({'MAPE(%)':None,'사유':f'WAPE ≤ {used:g}% 후보 없음'})
+            if used>wape_limit_percent+1e-9:warnings.append(f'{name}: WAPE 허용기준 {wape_limit_percent:g}% → {used:g}% 자동 완화(1%p 간격).')
         winner=min(candidates,key=lambda m:(round(m['mape_percent'],8),round(m['rmse_tonne'],8),['current','recommended','additional'].index(m['candidate_id'])))
         models[name]=winner
         for e in comparisons:
             if e['계열']==name:e['선택']=e['candidate_id']==winner['candidate_id']
         if winner.get('year_unavailable_reason'):warnings.append(winner['year_unavailable_reason'])
-    return {'version':4,'mode':'ship_type_year_exclude_700','models':models,'warnings':warnings,'excluded_rows':excluded,'formula_comparison':comparisons,'formula_searches':searches}
+    return {'version':4,'mode':'ship_type_year_exclude_700','models':models,'warnings':warnings,'excluded_rows':excluded,'formula_comparison':comparisons,'formula_searches':searches,'wape_config':{'initial_percent':wape_limit_percent,'auto_relax':auto_relax_wape,'step_percent':1}}
 
 def predict(df, bundle):
     validate_model_types(bundle)
@@ -343,18 +358,13 @@ def export(path, df, bundle):
         audit = [{**r, '구분': '학습'} for r in bundle.get('excluded_rows', [])]
         audit += [{**r, '구분': '현재 입력'} for r in df.attrs.get('excluded_rows', [])]
         if audit: pd.DataFrame(audit).drop_duplicates().to_excel(writer, sheet_name='제외 행', index=False)
-        metrics = [{k: m[k] for k in ['target','n','parameters','rmse_tonne','mape_percent','r2','condition_number']} for m in bundle['models'].values()]
+        metrics = [{k: m[k] for k in ['target','n','parameters','rmse_tonne','mape_percent','wape_percent','r2','condition_number']} for m in bundle['models'].values()]
         pd.DataFrame(metrics).to_excel(writer, sheet_name='학습적합도', index=False)
         pd.DataFrame({'주의': bundle['warnings'] + ['적합도는 학습자료 기준이며 외부 검증 성능이 아닙니다.', '모든 예측 중량은 SWBS700 제외입니다. 합계는 100~600만 합산하며 직접 회귀는 실적 총 경하중량−실적 SWBS700으로 학습합니다.', '순항속력은 입력에 보존하지만 제공된 식에 없어 회귀에 사용하지 않습니다.']}).to_excel(writer, sheet_name='안내', index=False)
 
 def template(path):
     with pd.ExcelWriter(path, engine='openpyxl') as writer:
         pd.DataFrame(columns=[HEADERS[c] for c in INPUT_COLUMNS]).to_excel(writer, sheet_name='데이터', index=False)
-        pd.DataFrame({'함종': SHIP_TYPES + ['초계함', '초계정'],
-                      '적용 함종': SHIP_TYPES + ['호위함', '호위함']}).to_excel(writer, sheet_name='함종 안내', index=False)
-        pd.DataFrame({'열': [HEADERS[c] for c in INPUT_COLUMNS],
-                      '단위': ['식별번호','문자','문자','year','m','m','m','hp','kW','kn'] + ['tonne'] * 8}).to_excel(writer, sheet_name='단위', index=False)
-
     # Format the workbook without adding fabricated reference-ship values.
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -370,19 +380,6 @@ def template(path):
     validation.errorTitle = '함종 확인'; validation.error = '목록에서 함종을 선택하세요.'
     validation.showErrorMessage = True; ws.add_data_validation(validation); validation.add('B2:B10000')
     ws.column_dimensions['A'].number_format = '@'
-    guide = wb.create_sheet('사용 안내')
-    for text in ['Naval Ship Weight Estimator(Total & Series)',
-                 '첫 번째 시트의 순번에 함정 고유 번호를 입력하세요. 중복·빈 번호는 제외됩니다. 001처럼 앞의 0을 유지할 수 있습니다.',
-                 '함유형은 별도 기록 항목이며 회귀계수에는 사용하지 않습니다. 입력한 경우 빈 값·?가 있는 행은 제외합니다.',
-                 '기존 자료와 추가 자료를 합친 전체 파일을 업로드하면 계수를 다시 추정합니다.',
-                 'SWBS100~600은 추정용 실적 중량, SWBS700은 공제용 실적 중량(0 허용), 총중량은 SWBS700 포함 원래 경하중량입니다.',
-                 '빈 값, ?, 수치 오류, 0·음수, 잘못된 함종·연도가 있는 함정 행은 모든 회귀분석에서 제외합니다. 총중량도 필수입니다.',
-                 '길이/폭/깊이 m, 소요마력 hp, 소요전력 kW, 순항속력 kn.',
-                 '속력은 기록용이며 현재 회귀식에는 사용하지 않습니다.',
-                 'SWBS100~600은 양수, SWBS700은 0 이상이어야 합니다. 총중량−SWBS700을 별도 경하중량 모형에 학습합니다. 이미 700을 뺀 값을 총중량에 넣지 마세요.',
-                 '초계함·초계정은 호위함과 통합 학습합니다.',
-                 '신규 함정은 GUI의 설계 제원 입력란에서 직접 입력하세요.']:
-        guide.append([text])
     for sheet in wb:
         sheet.sheet_properties.tabColor = '087F87'
         for cell in sheet[1]:
@@ -392,9 +389,6 @@ def template(path):
         sheet.row_dimensions[1].height = 60
         for col in sheet.columns:
             sheet.column_dimensions[col[0].column_letter].width = 10
-    for row in guide.iter_rows(min_row=2):
-        row[0].alignment = Alignment(wrap_text=True, vertical='top')
-        guide.row_dimensions[row[0].row].height = 110
     wb.save(path)
 
 
@@ -408,7 +402,8 @@ def save_model_excel(path, bundle):
         parameters.append({'Target': name, 'K': float(np.exp(m['coef'][0])), 'C': m['smearing'],
                            'Kind':m.get('kind','power'),**{'Add_'+k:v for k,v in m.get('additive_coeff',{}).items()},'CandidateId':m.get('candidate_id','current'),'CandidateLabel':m.get('candidate_label','기존 식'),'SizeByType':m.get('size_by_type',False),'VolumeReference':m.get('volume_reference'), 'Terms': ','.join(m['terms']), 'YearByType': m['year_by_type'],'YearEstimated':m.get('year_estimated',True),'YearIssue':m.get('year_unavailable_reason',''), 'YearScale':m.get('year_scale'),
                            'ReferenceType': m['classes'][0], 'N': m['n'], 'Parameters': m['parameters'],
-                           'RMSE_tonne': m['rmse_tonne'], 'MAPE_percent': m['mape_percent'],
+                           'RMSE_tonne': m['rmse_tonne'], 'MAPE_percent': m['mape_percent'],'WAPE_percent':m.get('wape_percent'),
+                           'WAPE_Initial':m.get('selection',{}).get('wape_requested_percent'),'WAPE_Limit':m.get('selection',{}).get('wape_limit_percent'),'WAPE_Relaxed':m.get('selection',{}).get('wape_relaxed',False),
                            'R2': m['r2'], 'ConditionNumber': m['condition_number'],
                            **{t: None if m.get('size_by_type') and t=='LBD' else float(v) for t, v in zip(m['terms'], m['coef'][1:1+nterms])}})
         for j, c in enumerate(m['classes']):
@@ -521,6 +516,7 @@ def load_model_excel(path):
                           'terms':terms, 'classes':classes, 'coef':coef, 'smearing':finite(row['C'],'C',True),
                           'mean_years':mean_years,'gamma':gamma,'year_by_type':year_by_type, 'ranges':bounds,
                           'n':integer(row['N'],'N'), 'parameters':integer(row['Parameters'],'Parameters'),
+                          'wape_percent':float(row['WAPE_percent']) if pd.notna(row.get('WAPE_percent')) else diagnostic_metrics(diagnostics[diagnostics['Target']==name].to_dict('records'))['wape_percent'],
                           'rmse_tonne':finite(row['RMSE_tonne'],'RMSE'), 'mape_percent':finite(row['MAPE_percent'],'MAPE'),
                           'r2':None if pd.isna(row['R2']) else finite(row['R2'],'R2'),
                           'condition_number':finite(row['ConditionNumber'],'ConditionNumber',True),
@@ -538,11 +534,12 @@ def diagnostic_rows(model, ship_type=None):
     return [r for r in model.get('diagnostics', []) if ship_type is None or r['함종'] == ship_type]
 
 def diagnostic_metrics(rows):
-    if not rows: return {'n': 0, 'rmse_tonne': None, 'mape_percent': None, 'r2': None}
+    if not rows: return {'n': 0, 'rmse_tonne': None, 'mape_percent': None, 'wape_percent':None, 'r2': None}
     actual=np.array([r['실제중량'] for r in rows], dtype=float)
     predicted=np.array([r['예측중량'] for r in rows], dtype=float)
     denominator=float(((actual-actual.mean())**2).sum())
     return {'n': len(rows), 'rmse_tonne': float(np.sqrt(np.mean((actual-predicted)**2))),
+            'wape_percent':float(np.sum(abs(predicted-actual))/np.sum(actual)*100),
             'mape_percent': float(np.mean(np.abs((predicted-actual)/actual))*100),
             'r2': None if denominator==0 else float(1-((actual-predicted)**2).sum()/denominator)}
 
