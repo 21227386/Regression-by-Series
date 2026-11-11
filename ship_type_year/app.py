@@ -117,7 +117,7 @@ class App:
         self.button(inner, 'Open Weight Estimation', self.open_estimation, True).pack(fill='x', pady=3)
         self.label(inner, '4  /  Reports', 13, GOLD, NAVY, True, True).pack(anchor='w', pady=(10,5))
         self.button(inner, 'Export Results to Excel', self.report).pack(fill='x', pady=3)
-        tk.Label(inner, text='기존 + 추가 자료를 합쳐 재업로드\n초계함 → 전용 Dt / 초계정 → 호위함\n중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=5)
+        tk.Label(inner, text='중량 tonne / 치수 m\n마력 hp / 전력 kW / 속력 kn', bg=NAVY, fg='#b8cdd8', font=(KO,9), justify='left').pack(anchor='w', pady=5)
 
     def design_panel(self):
         panel = tk.Frame(self.design_tab, bg=WHITE, padx=20, pady=15); panel.pack(fill='both', expand=True)
