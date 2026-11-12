@@ -11,7 +11,7 @@ import pandas as pd
 from year_search import SCALES,MAX_PERCENT
 from training_job import start_regression
 from results_export import save_regression_results
-from model import (BASE, SHIP_TYPES, read_excel, train, predict, export, template,
+from model import (BASE, SHIP_TYPE_DISPLAY_ORDER, display_types, read_excel, train, predict, export, template,
                    coefficients, validate_model_types, normalize_types, load_model_excel, SHIP_ALIASES, TOTAL_MODEL, TOTAL_SUM_COLUMN, diagnostic_rows, diagnostic_metrics, formula_text)
 
 TARGET_NAMES={'SWBS100':'Hull Structure','SWBS200':'Propulsion Plant','SWBS300':'Electric Plant',
@@ -136,7 +136,7 @@ class App:
             self.label(cell, caption, 10, MUTED, english=True).pack(anchor='w')
             var=tk.StringVar(); self.inputs[key]=var
             if key=='함분류':
-                e=ttk.Combobox(cell,textvariable=var,values=[t for t in SHIP_TYPES if t!='기뢰전함'],state='readonly',width=15,font=(KO,11)); var.set('호위함');self.ship_type_entry=e
+                e=ttk.Combobox(cell,textvariable=var,values=[t for t in SHIP_TYPE_DISPLAY_ORDER if t!='기뢰전함'],state='readonly',width=19,font=(KO,11)); var.set('호위함');self.ship_type_entry=e
             else:
                 e=tk.Entry(cell,textvariable=var,font=(EN,14),bg='#f3f7fa',fg=INK,relief='sunken',bd=2,width=15)
             e.pack(fill='x',ipady=4,pady=(4,0))
@@ -175,7 +175,7 @@ class App:
 
     def open_ship_types(self):
         self.require()
-        classes=self.bundle['models']['SWBS100']['classes']
+        classes=display_types(self.bundle['models']['SWBS100']['classes'])
         if self.ship_filter.get() not in classes:self.ship_filter.set(classes[0])
         self.type_selector.configure(values=classes,state='readonly')
         self.update_diagnostics();self.notebook.select(self.model_tab);self.reg_tabs.select(0)
@@ -246,7 +246,7 @@ class App:
         self.log=tk.Text(notes,wrap='word',font=(EN,11),fg=INK,bg='#f3f7fa',relief='flat',padx=12,pady=12)
         sy=ttk.Scrollbar(notes,orient='vertical',command=self.log.yview);self.log.configure(yscrollcommand=sy.set)
         sy.pack(side='right',fill='y');self.log.pack(fill='both',expand=True)
-        self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계정의 호위함 통합(초계함 별도) 후 척수가 가장 많은 비초계함 함종입니다.\n동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
+        self.show('실적함 업로드 후 자동 학습합니다.\n기준 함종은 오류 행 제외 및 초계정의 호위함 통합(초계함 별도) 후 척수가 가장 많은 비초계함 함종입니다.\n동률이면 구축함·호위함·고속함 및 고속정·상륙함·기뢰전함·지원함 순입니다.\nK와 역변환 보정계수 C는 분리하여 표시합니다.')
 
     def build_guide(self,parent):
         canvas=tk.Canvas(parent,bg='#edf2f5',highlightthickness=0)
@@ -378,7 +378,8 @@ class App:
             m=diagnostic_metrics(diagnostic_rows(x,cls))
             self.metric_tree.insert('','end',values=(name,m['n'],fmt(m['rmse_tonne']),fmt(m['mape_percent']),fmt(m['wape_percent']),fmt(x.get('selection',{}).get('wape_limit_percent')),fmt(m['r2'],4),x['parameters'],f"{x['condition_number']:.2f}",'—' if x.get('year_scale') is None else f"{x['year_scale']*100:.0f}"))
             terms=dict(zip(x['terms'],x['coef'][1:1+len(x['terms'])]));offset=1+len(x['terms'])
-            for j,ship_type in enumerate(x['classes']):
+            for ship_type in display_types(x['classes']):
+                j=x['classes'].index(ship_type)
                 if cls is not None and ship_type!=cls:continue
                 values=[name,ship_type,x.get('class_counts',{}).get(ship_type,'—'),x['classes'][0],
                         f"{1.0 if j==0 else math.exp(x['coef'][offset+j-1]):.8g}",'—' if x.get('kind')=='additive' else f"{math.exp(x['coef'][0]):.8g}",f"{x['smearing']:.8g}"]
@@ -562,11 +563,11 @@ class App:
         self.fleet_info.set(f"{source}\n유효 {m['n']}척 / {len(m['classes'])}개 함종\n기준: {ref} (Dt=1)")
         self.regression_summary.set(f"학습 {m['n']}척 / 기준 함종: {ref} (Dt=1) / 제외 {len(self.bundle.get('excluded_rows', []))}척\n기준 함종은 유효 학습 척수가 가장 많은 비초계함 함종입니다. C는 K와 별도 적용합니다.")
         self.final_formula_key=None
-        self.formula_selector.configure(values=m['classes'])
+        self.formula_selector.configure(values=display_types(m['classes']))
         if self.formula_ship.get() not in m['classes']:self.formula_ship.set(m['classes'][0])
         self.reg_selector.configure(values=list(self.bundle['models']))
         if self.reg_target.get() not in self.bundle['models']:self.reg_target.set('SWBS100')
-        classes=m['classes']
+        classes=display_types(m['classes'])
         if self.ship_filter.get() not in ['All Ship Types']+classes:self.ship_filter.set('All Ship Types')
         self.type_selector.configure(values=classes,state='disabled' if self.ship_filter.get()=='All Ship Types' else 'readonly')
         self.update_diagnostics()

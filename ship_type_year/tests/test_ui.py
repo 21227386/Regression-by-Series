@@ -11,6 +11,34 @@ from test_model import fleet
 
 @unittest.skipUnless(sys.platform=='win32' or os.environ.get('DISPLAY'),'Desktop display required')
 class UITests(unittest.TestCase):
+    def test_display_order_preserves_coefficient_indices(self):
+        import math
+        from model import train, display_types
+        root=tk.Tk();app=App(root)
+        try:
+            df=fleet()
+            types=['상륙함','고속함','호위함','구축함','지원함','초계함','기뢰전함']
+            df['함분류']=[types[i%len(types)] for i in range(len(df))]
+            app.bundle=train(df,compare=False,wape_limit_percent=None)
+            app.refresh_model('legacy names');root.update()
+            classes=app.bundle['models']['SWBS100']['classes']
+            expected=display_types(classes)
+            self.assertEqual(list(app.type_selector['values']),expected)
+            self.assertEqual(list(app.formula_selector['values']),expected)
+            rows=[app.coeff_tree.item(i)['values'] for i in app.coeff_tree.get_children()]
+            for target,m in app.bundle['models'].items():
+                target_rows=[r for r in rows if r[0]==target]
+                self.assertEqual([r[1] for r in target_rows],display_types(m['classes']))
+                for row in target_rows:
+                    j=m['classes'].index(row[1])
+                    dt=1.0 if j==0 else math.exp(m['coef'][1+len(m['terms'])+j-1])
+                    self.assertAlmostEqual(float(row[4]),dt,delta=max(1e-7,abs(dt)*1e-7))
+            self.assertNotIn('고속함',classes)
+            self.assertIn('고속함 및 고속정',classes)
+            app.open_ship_types()
+            self.assertEqual(list(app.type_selector['values']),expected)
+        finally:root.destroy()
+
     def test_ship_type_year_gui(self):
         root=tk.Tk();app=App(root);root.geometry('1380x940+0+0');root.update()
         self.assertLessEqual(app.header_description.winfo_rooty()+app.header_description.winfo_height(),app.header_frame.winfo_rooty()+app.header_frame.winfo_height()-4)
@@ -35,6 +63,10 @@ class UITests(unittest.TestCase):
                 self.assertFalse(app.analysis_dialog.winfo_exists())
                 self.assertEqual(len(app.search_tree.get_children()),201)
                 self.assertFalse(hasattr(app,'comparison_tree'))
+                self.assertEqual(list(app.ship_type_entry['values']),['구축함','호위함','초계함','고속함 및 고속정','상륙함','지원함'])
+                from model import display_types
+                self.assertEqual(list(app.type_selector['values']),display_types(app.bundle['models']['SWBS100']['classes']))
+                self.assertEqual(list(app.formula_selector['values']),display_types(app.bundle['models']['SWBS100']['classes']))
                 self.assertNotIn('초계정',app.ship_type_entry['values'])
                 self.assertNotIn('기뢰전함',app.ship_type_entry['values'])
                 self.assertIn('Commissioning Year Adjustment by Ship Type',root.title())

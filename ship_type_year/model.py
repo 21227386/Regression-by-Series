@@ -21,8 +21,15 @@ YEAR_TARGETS = set(WEIGHTS) | {TOTAL_TARGET}
 ALIASES = {'총 중량': '총중량', '충중량': '총중량', '취취역연도': '취역연도',
            '함정분류': '함분류', '함종': '함분류', '함정번호': '순번', '번호': '순번'}
 
-SHIP_TYPES = ['구축함', '호위함', '고속함', '상륙함', '기뢰전함', '지원함', '초계함']
-SHIP_ALIASES = {'초계정': '호위함'}
+SHIP_TYPES = ['구축함', '호위함', '고속함 및 고속정', '상륙함', '기뢰전함', '지원함', '초계함']
+# Regression order is historical: never use display order to select a reference.
+SHIP_TYPE_DISPLAY_ORDER = ['구축함', '호위함', '초계함', '고속함 및 고속정', '상륙함', '지원함', '기뢰전함']
+SHIP_ALIASES = {'초계정': '호위함', '고속함': '고속함 및 고속정'}
+
+def display_types(classes):
+    """Order existing classes for presentation without changing coefficient indices."""
+    return [c for c in SHIP_TYPE_DISPLAY_ORDER if c in classes]
+
 
 def normalize_types(df):
     out = df.copy()
@@ -380,7 +387,7 @@ def template(path):
     units = ['식별번호', '함종', '함유형', 'year', 'm', 'm', 'm', 'hp', 'kW', 'kn'] + ['tonne'] * 8
     for cell, unit in zip(ws[1], units):
         cell.comment = Comment('단위: ' + unit + (' / SWBS700 포함 원래 경하중량. 프로그램이 SWBS700을 한 번 공제합니다.' if cell.value == HEADERS['총중량'] else ' / 공제용 실적 중량(0 허용). 예측하지 않습니다.' if cell.value==HEADERS['SWBS700'] else ''), 'Naval Ship Design')
-    validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPES + ['초계정']) + '"')
+    validation = DataValidation(type='list', formula1='"' + ','.join(SHIP_TYPE_DISPLAY_ORDER + ['초계정']) + '"')
     validation.errorTitle = '함종 확인'; validation.error = '목록에서 함종을 선택하세요.'
     validation.showErrorMessage = True; ws.add_data_validation(validation); validation.add('B2:B10000')
     ws.column_dimensions['A'].number_format = '@'
@@ -428,7 +435,7 @@ def save_model_excel(path, bundle):
                               'Model Parameters, Ship Types, Ranges are the data used when loading this model.',
                               'K and C are separate. Dt=1 for the reference. MeanYear and Gamma are per ship type in Ship Types.',
                               'R2, RMSE and diagnostics describe the original training fit; editing coefficients does not recompute them.',
-                              '기준 함종은 유효 학습 척수가 가장 많은 함종입니다. 동률이면 구축함·호위함·고속함·상륙함·기뢰전함·지원함 순입니다.',
+                              '기준 함종은 유효 학습 척수가 가장 많은 함종입니다. 동률이면 구축함·호위함·고속함 및 고속정·상륙함·기뢰전함·지원함 순입니다.',
                               '회귀계수 보기 시트는 열람용입니다. 모델을 변경하려면 재학습 후 저장을 권장합니다.'] + bundle.get('warnings', [])}).to_excel(writer, sheet_name='Notes', index=False)
         pd.DataFrame([{'Format': 'NSWE Ship Type Year Excl700 Model', 'Version': 1}]).to_excel(writer, sheet_name='Format', index=False)
     from openpyxl import load_workbook
@@ -463,6 +470,10 @@ def load_model_excel(path):
             if '함유형' in diagnostics: diagnostics['함유형'] = diagnostics['함유형'].fillna('')
             excluded = pd.read_excel(book, sheet_name='Excluded Rows', dtype={'순번':str}).fillna('').to_dict('records')
             notes = pd.read_excel(book, sheet_name='Notes')['Note'].dropna().astype(str).tolist()[6:]
+        types['ShipType'] = types['ShipType'].replace(SHIP_ALIASES)
+        params['ReferenceType'] = params['ReferenceType'].replace(SHIP_ALIASES)
+        if '함종' in diagnostics:
+            diagnostics['함종'] = diagnostics['함종'].replace(SHIP_ALIASES)
         expected = set(WEIGHTS + [TOTAL_MODEL])
         if params.empty or params['Target'].duplicated().any() or not set(WEIGHTS)<=set(params['Target']) or not set(params['Target'])<=expected:
             raise ValueError('계열별 모델 목록이 잘못되었습니다.')
